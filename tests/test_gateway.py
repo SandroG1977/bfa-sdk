@@ -325,7 +325,8 @@ def test_gateway_lifespan_openai(mock_openai, mock_discover_tools, mock_discover
 
 @patch("bfa_sdk.core.gateway.discover_agents", return_value={})
 @patch("bfa_sdk.core.gateway.discover_tools", return_value={})
-def test_gateway_lifespan_local_fallback(mock_discover_tools, mock_discover_agents):
+@patch("sentence_transformers.SentenceTransformer", side_effect=Exception("local load failed"))
+def test_gateway_lifespan_local_fallback(mock_transformer, mock_discover_tools, mock_discover_agents):
     config = BFAConfig()
     config.use_mock_embeddings = False
     config.use_openai_embeddings = False
@@ -353,5 +354,50 @@ def test_mangum_import_error():
             sys.modules["mangum"] = orig_mangum
         else:
             sys.modules.pop("mangum", None)
+
+def test_gateway_not_ready():
+    import bfa_sdk.core.gateway as gateway
+    orig_router = gateway.ROUTER
+    try:
+        config = BFAConfig()
+        app = create_gateway_app(config)
+        with TestClient(app) as client:
+            gateway.ROUTER = None # Clear it after lifespan startup runs
+            res = client.get("/resolve", params={"query": "hey"})
+            assert res.status_code == 503
+            
+            res = client.get("/resolve/agents", params={"query": "hey"})
+            assert res.status_code == 503
+            
+            res = client.get("/resolve/tools", params={"query": "hey"})
+            assert res.status_code == 503
+
+            res = client.post("/register/agent", params={"url": "http://invalid"})
+            assert res.status_code == 503
+
+            res = client.post("/register/mcp", params={"url": "http://invalid"})
+            assert res.status_code == 503
+
+            res = client.post("/invoke", params={"query": "hey"})
+            assert res.status_code == 503
+    finally:
+        gateway.ROUTER = orig_router
+
+@patch("bfa_sdk.core.gateway.discover_agents", return_value={})
+def test_gateway_register_agent_fail(mock_discover, mock_gateway_setup):
+    config = BFAConfig()
+    app = create_gateway_app(config)
+    with TestClient(app) as client:
+        res = client.post("/register/agent", params={"url": "http://invalid"})
+        assert res.status_code == 400
+
+@patch("bfa_sdk.core.gateway.discover_tools", return_value={})
+def test_gateway_register_mcp_fail(mock_discover, mock_gateway_setup):
+    config = BFAConfig()
+    app = create_gateway_app(config)
+    with TestClient(app) as client:
+        res = client.post("/register/mcp", params={"url": "http://invalid"})
+        assert res.status_code == 400
+
 
 
