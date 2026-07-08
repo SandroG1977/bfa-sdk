@@ -20,7 +20,7 @@ El BFA Gateway actúa como una capa de middleware semántico entre los canales d
 graph TD
     Consumer[Consumidor / Whatsapp / WebApp] -->|1. Resolve Query| BFA[BFA Gateway]
     
-    subgraph BFA Gateway (Backend for Agents)
+    subgraph BFA_Gateway ["BFA Gateway (Backend for Agents)"]
         Router[Semantic Router] -->|2. Search Embeddings| FAISS[FAISS Vector Store]
         Registry[Registry] -->|Load metadata| Router
     end
