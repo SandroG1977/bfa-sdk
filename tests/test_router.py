@@ -56,3 +56,36 @@ def test_semantic_router_no_match_on_high_threshold():
     result = router.resolve("hola", threshold=0.999)
     assert result["type"] == "no_confident_match"
     assert result["best"] is None
+
+def test_semantic_router_empty_registry():
+    embedder = DummyEmbedder()
+    router = BFASemanticRouter(embedder)
+    router.build_index()
+    assert router.index is None
+    
+    # Resolve should return empty match
+    result = router.resolve("hello")
+    assert result["type"] == "no_match"
+    assert result["best"] is None
+
+def test_semantic_router_unknown_filter_type():
+    embedder = DummyEmbedder()
+    router = BFASemanticRouter(embedder)
+    mock_agent_data = {
+        "cuentas_agent": {
+            "name": "Agente de Cuentas",
+            "description": "Expert banking agent",
+            "url": "http://127.0.0.1:8002",
+            "tags": ["cuenta"],
+            "examples": ["abrir cuenta"],
+            "type": "agent"
+        }
+    }
+    router.update_registry(mock_agent_data)
+    router.build_index()
+    
+    # Filter by type "tool" which is not present in registry
+    result = router.resolve("abrir cuenta", filter_type="tool")
+    assert result["type"] == "no_match"
+    assert result["best"] is None
+
