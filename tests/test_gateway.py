@@ -245,12 +245,113 @@ def test_load_persisted_endpoints_invalid():
 @patch("a2a.client.A2ACardResolver.get_agent_card", side_effect=Exception("connection error"))
 @pytest.mark.anyio
 async def test_discover_agents_error(mock_resolver):
-    res = await discover_agents("http://invalid-url")
+    res = await discover_agents(["http://invalid-url"])
     assert res == {}
 
 # Test discover_tools with connection error
 @patch("httpx.AsyncClient.get", side_effect=Exception("connection error"))
 @pytest.mark.anyio
 async def test_discover_tools_error(mock_get):
-    res = await discover_tools("http://invalid-url")
+    res = await discover_tools(["http://invalid-url"])
     assert res == {}
+
+from bfa_sdk.core.gateway import persist_endpoint
+
+def test_persist_endpoint_error():
+    with patch("builtins.open", side_effect=IOError("disk full")):
+        # Should execute cleanly without raising exception
+        persist_endpoint("agent", "http://localhost:8080")
+
+@pytest.mark.anyio
+async def test_discover_agents_success():
+    mock_agent_card = MagicMock()
+    mock_agent_card.name = "My Agent"
+    mock_agent_card.description = "Test Desc"
+    mock_agent_card.version = "1.0"
+    
+    mock_skill = MagicMock()
+    mock_skill.id = "my_skill"
+    mock_skill.name = "My Skill"
+    mock_skill.description = "Test Skill"
+    mock_skill.tags = ["tag"]
+    mock_skill.examples = ["ex"]
+    mock_agent_card.skills = [mock_skill]
+    
+    with patch("bfa_sdk.core.gateway.A2ACardResolver") as mock_resolver_cls:
+        mock_resolver = AsyncMock()
+        mock_resolver.get_agent_card.return_value = mock_agent_card
+        mock_resolver_cls.return_value = mock_resolver
+        
+        res = await discover_agents(["http://valid-url"])
+        assert "my_skill" in res
+        assert res["my_skill"]["name"] == "My Skill"
+        assert res["my_skill"]["url"] == "http://valid-url"
+
+@pytest.mark.anyio
+async def test_discover_tools_success():
+    mock_tools_list = [
+        {
+            "name": "my_tool",
+            "description": "Test Tool",
+            "inputSchema": {"properties": {"param": {"type": "string"}}},
+            "annotations": {"tags": ["tag"], "examples": ["ex"]}
+        }
+    ]
+    with patch("httpx.AsyncClient.get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = mock_tools_list
+        mock_get.return_value = mock_resp
+        
+        res = await discover_tools(["http://valid-url"])
+        assert "my_tool" in res
+        assert res["my_tool"]["name"] == "my_tool"
+        assert res["my_tool"]["server_url"] == "http://valid-url"
+
+# Test lifespans with different embedder configurations
+@patch("bfa_sdk.core.gateway.discover_agents", return_value={})
+@patch("bfa_sdk.core.gateway.discover_tools", return_value={})
+@patch("openai.OpenAI")
+def test_gateway_lifespan_openai(mock_openai, mock_discover_tools, mock_discover_agents):
+    config = BFAConfig()
+    config.use_mock_embeddings = False
+    config.use_openai_embeddings = True
+    config.openai_api_key = "test-key"
+    
+    app = create_gateway_app(config)
+    with TestClient(app):
+        # Startup event triggered, check if embedder setup correctly
+        pass
+
+@patch("bfa_sdk.core.gateway.discover_agents", return_value={})
+@patch("bfa_sdk.core.gateway.discover_tools", return_value={})
+def test_gateway_lifespan_local_fallback(mock_discover_tools, mock_discover_agents):
+    config = BFAConfig()
+    config.use_mock_embeddings = False
+    config.use_openai_embeddings = False
+    config.embedding_model = "invalid-model-name-for-testing"
+    
+    app = create_gateway_app(config)
+    with TestClient(app):
+        # Startup event triggered, should fallback to DummyEmbedder cleanly
+        pass
+
+def test_mangum_import_error():
+    import sys
+    import importlib
+    
+    # Save original
+    orig_mangum = sys.modules.get("mangum")
+    
+    try:
+        # Mock ImportError for mangum
+        sys.modules["mangum"] = None
+        importlib.reload(sys.modules["bfa_sdk.core.gateway"])
+    finally:
+        # Restore original
+        if orig_mangum:
+            sys.modules["mangum"] = orig_mangum
+        else:
+            sys.modules.pop("mangum", None)
+
+

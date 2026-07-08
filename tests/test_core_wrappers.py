@@ -37,20 +37,28 @@ def test_mcp_wrapper():
     assert "test_tag" in tool["annotations"]["tags"]
     assert "example 1" in tool["annotations"]["examples"]
     assert isinstance(tool["inputSchema"], dict)
-
 # 2. Test BFAMCP register and list tools exceptions
 @pytest.mark.anyio
 @patch("httpx.AsyncClient.post")
 async def test_mcp_register_with_gateway(mock_post):
     mcp_server = BFAMCP("MDBank MCP")
     
+    # Success Case
     mock_res = MagicMock()
     mock_res.status_code = 200
     mock_post.return_value = mock_res
-    
     success = await mcp_server.register_with_gateway("http://localhost:8000", "http://localhost:8001")
     assert success is True
-    mock_post.assert_called_once()
+    
+    # Failure Case 1: Status Code 500
+    mock_res.status_code = 500
+    success = await mcp_server.register_with_gateway("http://localhost:8000", "http://localhost:8001")
+    assert success is False
+
+    # Failure Case 2: Exception raised
+    mock_post.side_effect = Exception("network connection failed")
+    success = await mcp_server.register_with_gateway("http://localhost:8000", "http://localhost:8001")
+    assert success is False
 
 @pytest.mark.anyio
 async def test_mcp_list_tools_exception():
@@ -159,11 +167,22 @@ async def test_agent_register_with_gateway(mock_post):
         url="http://localhost:8002"
     )
     
+    # Success Case
     mock_res = MagicMock()
     mock_res.status_code = 200
     mock_post.return_value = mock_res
     
     success = await agent.register_with_gateway("http://localhost:8000")
     assert success is True
-    mock_post.assert_called_once()
+    
+    # Failure Case 1: Status Code 500
+    mock_res.status_code = 500
+    success = await agent.register_with_gateway("http://localhost:8000")
+    assert success is False
+    
+    # Failure Case 2: Exception raised
+    mock_post.side_effect = Exception("network connection failed")
+    success = await agent.register_with_gateway("http://localhost:8000")
+    assert success is False
+
 
