@@ -1,0 +1,92 @@
+# Backend for Agents SDK (BFA)
+
+A generic and opinionated framework and SDK to implement the **BFA (Backend for Agents)** pattern, featuring native support for **FAISS-based Semantic Routing (vector search)** and standard abstractions for A2A Agents and MCP Servers.
+
+Designed to extend and upgrade the traditional keyword-based BM25 router by leveraging semantic vector embeddings to resolve tools and agents dynamically.
+
+---
+
+## Multilingual Documentation
+* [Português (Portuguese)](README.pt.md)
+* [Español (Spanish)](README.es.md)
+
+---
+
+## BFA Protocol Architecture
+
+The BFA Gateway acts as a semantic middleware layer between consumers (e.g. messaging UIs, chat systems) and specialized agents/tools.
+
+```mermaid
+graph TD
+    Consumer[Consumer UI / Whatsapp / WebApp] -->|1. Resolve Query| BFA[BFA Gateway]
+    
+    subgraph BFA Gateway (Backend for Agents)
+        Router[Semantic Router] -->|2. Search Embeddings| FAISS[FAISS Vector Store]
+        Registry[Registry] -->|Load metadata| Router
+    end
+    
+    BFA -->|3. Route & Invoke| Agent1[Cuentas Agent (A2A)]
+    BFA -->|3. Route & Invoke| Agent2[Tarjetas Agent (A2A)]
+    BFA -->|4. Execute Tool| MCP1[MDBank MCP (FastMCP)]
+```
+
+---
+
+## Key Features
+
+1. **FAISS-Based Semantic Routing:** Instead of matching exact keywords (like BM25), the BFA Gateway indexes the descriptions, tags, and examples of agents and tools in a local FAISS vector index. This resolves queries to matching functions even when synonyms are used (e.g. matching *"plastic"* to *"credit card"*).
+2. **`BFAAgent` Abstraction:** Simplifies building A2A agents using the `a2a-sdk` and Starlette. Forces standard metadata declarations (`tags`, `examples`, `description`) required for semantic indexing.
+3. **`BFAMCP` Abstraction:** Wraps and extends `FastMCP` servers. Automatically exposes a standardized `/tools` endpoint returning input schemas, descriptions, and custom tags/examples for discovery.
+4. **Serverless (AWS Lambda) Ready:** Includes a built-in **Mangum** adapter in the Gateway. Combined with the cloud-based `OpenAIEmbedder`, the BFA Gateway runs serverless on demand with zero cold-starts.
+
+---
+
+## Quick Start & Running the Demo
+
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
+# Optional: install in editable development mode
+pip install -e .
+```
+
+### 2. Run the MDBank Demo
+The demo launches three mock servers in the background:
+1. A mock MDBank MCP server (`examples/mock_mdbank_mcp.py`) on port `8001`.
+2. A mock Cuentas A2A Agent (`examples/mock_cuentas_agent.py`) on port `8002`.
+3. A mock Tarjetas A2A Agent (`examples/mock_tarjetas_agent.py`) on port `8003`.
+4. The BFA Gateway on port `8000`, running dynamic discovery and performing test queries.
+
+To run:
+```bash
+python examples/run_demo.py
+```
+
+### 3. Run the UI Dashboard (IRC-A Central Hub)
+We have included a React-based UI Dashboard under `examples/frontend` to visually monitor the active agents/tools registry, register new microservices dynamically (plug-and-play), and chat with the routed banking agents:
+
+```bash
+# Navigate to the frontend folder
+cd examples/frontend
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm start
+```
+Open `http://localhost:3000` to interact with your local agent hub in real-time.
+
+
+---
+
+## Credits & Acknowledgements
+
+This SDK is a community-driven implementation and expansion of the **BFA (Backend for Agents)** architectural pattern originally designed and documented by **Michael Douglas Barbosa Araujo** (Staff AI Architect). 
+
+You can read his original article introducing the pattern here:
+👉 [O padrão Back-end para Agentes (BFA) - Medium](https://medium.com/@mdbaraujo/o-padr%C3%A3o-back-end-para-agentes-bfa-a53c1c6d87fb)
+
+The goal of this project is to provide a standardized, packaged SDK extending his original concept with semantic vector routing (FAISS) and unified base adapters. All credit for the underlying protocol and architectural vision belongs to him.
+
+

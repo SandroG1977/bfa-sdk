@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bfa-sdk"
+version = "0.1.0"
+description = "A generic Backend for Agents (BFA) SDK with FAISS semantic routing."
+readme = "README.md"
+authors = [
+    { name = "Sandro Garcia" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "python-dotenv",
+    "a2a-sdk",
+    "numpy",
+    "faiss-cpu",
+    "pydantic",
+    "fastmcp",
+    "pyyaml",
+    "mangum",
+    "openai"
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+local = [
+    "sentence-transformers"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bfa_sdk*"]

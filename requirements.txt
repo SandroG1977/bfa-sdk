@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+httpx
+python-dotenv
+a2a-sdk
+numpy
+faiss-cpu
+pydantic
+fastmcp
+pyyaml
+mangum
+openai
