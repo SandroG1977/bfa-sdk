@@ -18,16 +18,16 @@ O BFA Gateway atua como uma camada de middleware semântico entre os canais de c
 
 ```mermaid
 graph TD
-    Consumer[Consumidor / Whatsapp / WebApp] -->|1. Resolve Query| BFA[BFA Gateway]
+    Consumer["Consumidor / Whatsapp / WebApp"] -->|1. Resolve Query| BFA[BFA Gateway]
     
     subgraph BFA_Gateway ["BFA Gateway (Backend for Agents)"]
         Router[Semantic Router] -->|2. Search Embeddings| FAISS[FAISS Vector Store]
         Registry[Registry] -->|Load metadata| Router
     end
     
-    BFA -->|3. Route & Invoke| Agent1[Agente de Cuentas (A2A)]
-    BFA -->|3. Route & Invoke| Agent2[Agente de Tarjetas (A2A)]
-    BFA -->|4. Execute Tool| MCP1[MDBank MCP (FastMCP)]
+    BFA -->|3. Route & Invoke| Agent1["Agente de Cuentas (A2A)"]
+    BFA -->|3. Route & Invoke| Agent2["Agente de Tarjetas (A2A)"]
+    BFA -->|4. Execute Tool| MCP1["MDBank MCP (FastMCP)"]
 ```
 
 ---
