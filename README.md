@@ -41,6 +41,23 @@ graph TD
 
 ---
 
+## Configuring Embedding Providers & Chunking
+
+The BFA Gateway uses semantic embeddings to index agent/tool metadata in FAISS. You can choose between local models, cloud APIs, or offline mock routing via environment variables:
+
+| Mode / Provider | Environment Variables | Dependencies | Description |
+|---|---|---|---|
+| **Local Real (Default)** | None | `bfa-sdk[local]` | Uses `sentence-transformers` locally. Recommended for Python <= 3.12 environments. |
+| **OpenAI (Cloud)** | `BFA_USE_OPENAI_EMBEDDINGS=true`, `OPENAI_API_KEY="..."` | `openai` | Queries OpenAI's `text-embedding-3-small` endpoint. Perfect for serverless/Lambda environments. |
+| **Offline Mock (Feature Hashing)** | `BFA_USE_MOCK_EMBEDDINGS=true` | None | Uses a stable MD5 feature hashing trick to route queries based on keywords. Zero dependencies, fast, and local. |
+
+> [!NOTE]
+> **Why is there no Chunking in the Gateway?**
+> The BFA Gateway is a semantic router of services, not a document retrieval engine (RAG). It indexes short microservice metadata cards (names, descriptions, tags, examples) which fit completely within embedding token limits.
+> If you need to perform **Document Chunking** (RAG over PDFs/manuals), it should be implemented **inside the respective A2A Agent's internal database/logic**, keeping the Gateway lightweight and decoupled from document storage.
+
+---
+
 ## Quick Start & Running the Demo
 
 ### 1. Install Dependencies
