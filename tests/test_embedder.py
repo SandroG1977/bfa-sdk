@@ -22,6 +22,11 @@ def test_dummy_embedder():
     norm = np.linalg.norm(vec)
     assert pytest.approx(norm, abs=1e-5) == 1.0
 
+    # Test empty query fallback coverage
+    vec_empty = embedder.embed_query("")
+    assert len(vec_empty) == 384
+    assert vec_empty[0] == 1.0
+
 @patch("openai.OpenAI")
 def test_openai_embedder(mock_openai):
     # Set up mock client response
