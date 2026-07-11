@@ -1,6 +1,7 @@
 import inspect
 import os
 import jwt
+from contextlib import asynccontextmanager
 from typing import Dict, Any, List, Callable
 from fastmcp import FastMCP
 from starlette.requests import Request
@@ -67,14 +68,14 @@ class BFAMCP:
                 except Exception as e:
                     print(f"BFAMCP Warning: Failed to disconnect from gateway on shutdown: {e}")
 
-        # Register event handler safely across different Starlette versions
-        try:
-            self._asgi_app.add_event_handler("shutdown", shutdown_event)
-        except AttributeError:
-            try:
-                self._asgi_app.router.add_event_handler("shutdown", shutdown_event)
-            except AttributeError:
-                print("BFAMCP Warning: Starlette app does not support shutdown event handler registration.")
+        # Register lifespan-based teardown handler dynamically
+        old_lifespan = self._asgi_app.router.lifespan_context
+        @asynccontextmanager
+        async def wrapped_lifespan(app_inst):
+            async with old_lifespan(app_inst) as yielded_val:
+                yield yielded_val
+                await shutdown_event()
+        self._asgi_app.router.lifespan_context = wrapped_lifespan
 
     @property
     def app(self):

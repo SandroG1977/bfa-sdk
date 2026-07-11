@@ -2,6 +2,8 @@ import abc
 import os
 import httpx
 import jwt
+import asyncio
+from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -194,14 +196,14 @@ class BFAAgent(abc.ABC):
                 except Exception as e:
                     print(f"BFAAgent Warning: Failed to disconnect from gateway on shutdown: {e}")
 
-        # Register event handler safely across different Starlette versions
-        try:
-            self.app.add_event_handler("shutdown", shutdown_event)
-        except AttributeError:
-            try:
-                self.app.router.add_event_handler("shutdown", shutdown_event)
-            except AttributeError:
-                print("BFAAgent Warning: Starlette app does not support shutdown event handler registration.")
+        # Register lifespan-based teardown handler dynamically
+        old_lifespan = self.app.router.lifespan_context
+        @asynccontextmanager
+        async def wrapped_lifespan(app_inst):
+            async with old_lifespan(app_inst) as yielded_val:
+                yield yielded_val
+                await shutdown_event()
+        self.app.router.lifespan_context = wrapped_lifespan
 
         # Run auto-registration
         if self.gateway_url:
