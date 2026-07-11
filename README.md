@@ -1,8 +1,9 @@
-# Backend for Agents SDK (BFA)
+# Backend for Agents SDK (BFA) & IRC-A Protocol
 
-A generic and opinionated framework and SDK to implement the **BFA (Backend for Agents)** pattern, featuring native support for **FAISS-based Semantic Routing (vector search)** and standard abstractions for A2A Agents and MCP Servers.
+A generic and opinionated framework and SDK to implement the **BFA (Backend for Agents)** pattern and the **IRC-A (Internet Relay Chat for Agents)** protocol, featuring native support for **FAISS-based Semantic Routing (vector search)**, asymmetric zero-trust security boundaries, and standard abstractions for A2A Agents and MCP Servers.
 
-Designed to extend and upgrade the traditional keyword-based BM25 router by leveraging semantic vector embeddings to resolve tools and agents dynamically.
+Read the official protocol specification:
+👉 **[IRC-A Protocol Whitepaper (v1.0.0)](IRC-A_Whitepaper.md)** - *Decentralized Agent Networks, Semantic Capability Routing, and Secure-by-Design Software Architecture.*
 
 ---
 
@@ -12,9 +13,9 @@ Designed to extend and upgrade the traditional keyword-based BM25 router by leve
 
 ---
 
-## BFA Protocol Architecture
+## BFA / IRC-A Protocol Architecture
 
-The BFA Gateway acts as a semantic middleware layer between consumers (e.g. messaging UIs, chat systems) and specialized agents/tools.
+The BFA Gateway acts as a semantic middleware and registry broker layer between consumers (e.g., messaging UIs, chat systems) and specialized agents/tools.
 
 ```mermaid
 graph TD
@@ -34,10 +35,11 @@ graph TD
 
 ## Key Features
 
-1. **FAISS-Based Semantic Routing:** Instead of matching exact keywords (like BM25), the BFA Gateway indexes the descriptions, tags, and examples of agents and tools in a local FAISS vector index. This resolves queries to matching functions even when synonyms are used (e.g. matching *"plastic"* to *"credit card"*).
+1. **FAISS-Based Semantic Routing:** Instead of matching exact keywords (like BM25), the BFA Gateway indexes the descriptions, tags, and examples of agents and tools in a local FAISS vector index. This resolves queries to matching functions even when synonyms are used (e.g., matching *"plastic"* to *"credit card"*).
 2. **`BFAAgent` Abstraction:** Simplifies building A2A agents using the `a2a-sdk` and Starlette. Forces standard metadata declarations (`tags`, `examples`, `description`) required for semantic indexing.
 3. **`BFAMCP` Abstraction:** Wraps and extends `FastMCP` servers. Automatically exposes a standardized `/tools` endpoint returning input schemas, descriptions, and custom tags/examples for discovery.
-4. **Serverless (AWS Lambda) Ready:** Includes a built-in **Mangum** adapter in the Gateway. Combined with the cloud-based `OpenAIEmbedder`, the BFA Gateway runs serverless on demand with zero cold-starts.
+4. **Secure-by-Design IRC-A Security (Roadmap):** Employs asymmetric challenge-response registration handshakes, logical channel masking (via container-level `IRCA_CHANNELS` env variables) to segregate vector search spaces, and Ephemeral DET (Delegated Execution Tokens) to enable direct decentralized P2P invocation without gateway bottlenecks.
+5. **Serverless (AWS Lambda) Ready:** Includes a built-in **Mangum** adapter in the Gateway. Combined with the cloud-based `OpenAIEmbedder`, the BFA Gateway runs serverless on demand with zero cold-starts.
 
 ---
 
