@@ -52,12 +52,36 @@ class BFAMCP:
         async def list_tools_endpoint(request: Request) -> JSONResponse:
             return await self._list_tools_handler()
 
+        # Cache Starlette/ASGI app and register shutdown hook to disconnect cleanly
+        self._asgi_app = self.mcp.http_app()
+        async def shutdown_event():
+            if self.gateway_url:
+                try:
+                    import httpx
+                    async with httpx.AsyncClient() as client:
+                        await client.post(
+                            f"{self.gateway_url.rstrip('/')}/register/disconnect",
+                            json={"node_id": self.node_id},
+                            timeout=3
+                        )
+                except Exception as e:
+                    print(f"BFAMCP Warning: Failed to disconnect from gateway on shutdown: {e}")
+
+        # Register event handler safely across different Starlette versions
+        try:
+            self._asgi_app.add_event_handler("shutdown", shutdown_event)
+        except AttributeError:
+            try:
+                self._asgi_app.router.add_event_handler("shutdown", shutdown_event)
+            except AttributeError:
+                print("BFAMCP Warning: Starlette app does not support shutdown event handler registration.")
+
     @property
     def app(self):
         """
         Exposes the Starlette/ASGI application for uvicorn deployment.
         """
-        return self.mcp.http_app()
+        return self._asgi_app
 
     def tool(self, name: str = None, description: str = None, tags: List[str] = None, examples: List[str] = None):
         """

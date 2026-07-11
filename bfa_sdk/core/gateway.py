@@ -289,6 +289,40 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         
         return {"session_token": session_token, "expiry": expiry}
 
+    @app.post("/register/disconnect")
+    def register_disconnect(payload: Dict[str, Any]):
+        """
+        Unregisters/disconnects a node from the Gateway registry and rebuilds the FAISS index.
+        """
+        node_id = payload.get("node_id")
+        if not node_id:
+            raise HTTPException(status_code=400, detail="Missing node_id")
+            
+        # 1. Remove from registered nodes list
+        if node_id in REGISTERED_NODES:
+            del REGISTERED_NODES[node_id]
+            
+        # 2. Remove associated capabilities from semantic search registry
+        keys_to_remove = []
+        for key, value in list(ROUTER.registry.items()):
+            if key == node_id or value.get("url") == node_id or value.get("server_url") == node_id:
+                keys_to_remove.append(key)
+            elif value.get("type") == "agent" and key.startswith(node_id):
+                keys_to_remove.append(key)
+                
+        for k in keys_to_remove:
+            if k in ROUTER.registry:
+                del ROUTER.registry[k]
+                
+        # Rebuild FAISS index
+        if ROUTER:
+            ROUTER.build_index()
+            
+        return {
+            "status": "success",
+            "message": f"Node '{node_id}' successfully disconnected and removed from FAISS index."
+        }
+
     @app.post("/discover")
     def discover(query: str, payload: Dict[str, Any] = None):
         """

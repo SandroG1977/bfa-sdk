@@ -181,6 +181,28 @@ class BFAAgent(abc.ABC):
         self.app = Starlette(routes=routes)
         self.app.add_middleware(IRCAHeaderTracingMiddleware, agent_instance=self)
 
+        # Register shutdown hook to disconnect from Gateway cleanly
+        async def shutdown_event():
+            if self.gateway_url:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(
+                            f"{self.gateway_url.rstrip('/')}/register/disconnect",
+                            json={"node_id": self.agent_id},
+                            timeout=3
+                        )
+                except Exception as e:
+                    print(f"BFAAgent Warning: Failed to disconnect from gateway on shutdown: {e}")
+
+        # Register event handler safely across different Starlette versions
+        try:
+            self.app.add_event_handler("shutdown", shutdown_event)
+        except AttributeError:
+            try:
+                self.app.router.add_event_handler("shutdown", shutdown_event)
+            except AttributeError:
+                print("BFAAgent Warning: Starlette app does not support shutdown event handler registration.")
+
         # Run auto-registration
         if self.gateway_url:
             self._auto_register_to_gateway()
