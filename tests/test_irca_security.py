@@ -599,11 +599,287 @@ def test_mcp_public_key_download_failure(monkeypatch):
     Tests MCP public key download exception branches.
     """
     import httpx
+    
+    # 1. Test string loading (line 30 in mcp.py)
+    mcp_pem = BFAMCP("fail-mcp", gateway_public_key=TEST_PUB_PEM)
+    assert mcp_pem.gateway_public_key is not None
+    
+    # 2. Test request error download (lines 42-49 in mcp.py)
     def mock_get_fail(*args, **kwargs):
         raise httpx.RequestError("Mock connection error")
     monkeypatch.setattr(httpx, "get", mock_get_fail)
     
     mcp = BFAMCP("fail-mcp", gateway_url="http://localhost:8000")
     assert mcp.gateway_public_key is None
+
+
+@pytest.mark.anyio
+async def test_uncovered_lifespan_teardown_errors(monkeypatch):
+    """
+    Tests error handling inside agent and MCP shutdown lifespans (lines 196-197 in agent.py, 68-69 in mcp.py).
+    """
+    import httpx
+    from unittest.mock import MagicMock
+    
+    async def mock_post_fail(self, url, *args, **kwargs):
+        raise httpx.RequestError("Teardown request failed")
+        
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_fail)
+    
+    monkeypatch.setattr(BFAAgent, "_auto_register_to_gateway", lambda self: True)
+    agent = MockSecureAgent(
+        agent_id="err-agent",
+        name="Err Agent",
+        description="test",
+        tags=["loan"],
+        examples=["ex"],
+        url="http://localhost:8002",
+        gateway_url="http://localhost:8000"
+    )
+    
+    with TestClient(agent.app) as tc:
+        pass
+        
+    mcp = BFAMCP("err-mcp", gateway_url="http://localhost:8000")
+    with TestClient(mcp.app) as tc:
+        pass
+
+
+@pytest.mark.anyio
+async def test_async_secure_tool_and_extra_decorators(monkeypatch):
+    """
+    Tests async secure tool wrapper (lines 105-114 in mcp.py) and prompt/resource decorators (153, 164 in mcp.py).
+    """
+    from unittest.mock import MagicMock
+    
+    mcp = BFAMCP("sec-mcp", gateway_public_key=TEST_PUBLIC_KEY)
+    
+    # Register async secure tool
+    @mcp.tool(name="secure_async_tool")
+    async def secure_async_tool(delegated_token: str, item: str) -> str:
+        return f"Processed {item}"
+        
+    # Register resource
+    @mcp.resource("data://users")
+    def get_users() -> str:
+        return "user1"
+        
+    # Register prompt
+    @mcp.prompt
+    def ask_prompt(user: str) -> str:
+        return f"Ask {user}"
+        
+    # Call verify_incoming_det token error path (line 183 in mcp.py)
+    assert mcp.verify_incoming_det("invalid-token", "secure_async_tool", {}) is False
+    
+    # 1. No gateway public key configured inside verify_incoming_det (line 153 in mcp.py)
+    mcp_no_pub = BFAMCP("no-pub-mcp")
+    mcp_no_pub.gateway_public_key = None
+    assert mcp_no_pub.verify_incoming_det("token", "action", {}) is False
+    
+    # 2. Call async tool without token (should raise ValueError)
+    with pytest.raises(ValueError, match="IRC-A DET Token validation failed"):
+        await secure_async_tool(delegated_token="", item="book")
+        
+    # Call with valid token
+    import time
+    det = jwt.encode(
+        {
+            "sub": "caller",
+            "aud": "sec-mcp",
+            "permitted_action": "secure_async_tool",
+            "restricted_params": {"item": "notebook"},
+            "exp": int(time.time()) + 60
+        },
+        TEST_PRIVATE_KEY,
+        algorithm="RS256"
+    )
+    res = await secure_async_tool(delegated_token=det, item="notebook")
+    assert res == "Processed notebook"
+    
+    # 3. Action mismatch inside verify_incoming_det (line 164 in mcp.py)
+    det_mismatch = jwt.encode(
+        {
+            "sub": "caller",
+            "aud": "sec-mcp",
+            "permitted_action": "wrong_action",
+            "restricted_params": {"item": "notebook"},
+            "exp": int(time.time()) + 60
+        },
+        TEST_PRIVATE_KEY,
+        algorithm="RS256"
+    )
+    assert mcp.verify_incoming_det(det_mismatch, "secure_async_tool", {"item": "notebook"}) is False
+    
+    # 4. Fallback from parameters to input_model in list_tools (lines 184-185 in mcp.py)
+    mock_tool = MagicMock()
+    mock_tool.name = "mock_tool"
+    mock_tool.description = "mock description"
+    del mock_tool.parameters
+    
+    mock_input_model = MagicMock()
+    mock_input_model.model_json_schema = lambda: {"type": "object"}
+    mock_tool.input_model = mock_input_model
+    
+    async def mock_list_tools():
+        return [mock_tool]
+        
+    monkeypatch.setattr(mcp.mcp, "list_tools", mock_list_tools)
+    res_list = await mcp._list_tools_handler()
+    assert res_list.status_code == 200
+
+
+def test_discover_success_flow():
+    """
+    Tests Gateway /discover success flow (lines 360-385 in gateway.py) and ROUTER is None error (line 353).
+    """
+    import time
+    from bfa_sdk.core.gateway import GATEWAY_PRIVATE_KEY
+    import bfa_sdk.core.gateway as gateway_mod
+    
+    app = create_gateway_app()
+    client = TestClient(app)
+    
+    # Register an agent skill semantically with keys.startswith mismatch
+    from bfa_sdk.core.gateway import ROUTER
+    ROUTER.update_registry({
+        "agent-loan-test_skill": {
+            "name": "apply_loan",
+            "description": "processes credit loans",
+            "tags": ["loan"],
+            "examples": ["process loan application"],
+            "type": "agent",
+            "url": "http://localhost:8088"
+        }
+    })
+    ROUTER.build_index()
+    
+    # Mint a valid session token
+    session_token = jwt.encode(
+        {"sub": "caller-client", "channels": ["#public"], "exp": int(time.time()) + 100},
+        GATEWAY_PRIVATE_KEY,
+        algorithm="RS256"
+    )
+    
+    # Test /resolve endpoint (line 212 in gateway.py)
+    res_resolve = client.get("/resolve?query=loan")
+    assert res_resolve.status_code == 200
+    
+    # Call /discover
+    res = client.post("/discover?query=process loan application for customer id-992", json={
+        "session_token": session_token
+    })
+    assert res.status_code == 200
+    data = res.json()
+    assert "det" in data
+    assert data["url"] == "http://localhost:8088"
+    
+    from bfa_sdk.core.gateway import GATEWAY_PUBLIC_KEY
+    # Verify the minted DET offline using our agent
+    decoded = jwt.decode(data["det"], GATEWAY_PUBLIC_KEY, algorithms=["RS256"], audience="agent-loan-test_skill")
+    assert decoded["permitted_action"] == "apply_loan"
+    assert decoded["restricted_params"]["customer_id"] == "992"
+    
+    # Test /register/disconnect with registered node (line 303 in gateway.py)
+    client.post("/register/init", json={"node_id": "disc-node"})
+    res_disc = client.post("/register/disconnect", json={"node_id": "disc-node"})
+    assert res_disc.status_code == 200
+    
+    # Test key.startswith(node_id) matching branch in disconnect (line 311 in gateway.py)
+    res_disc_starts = client.post("/register/disconnect", json={"node_id": "agent-loan-test"})
+    assert res_disc_starts.status_code == 200
+    assert "agent-loan-test_skill" not in ROUTER.registry
+    
+    # Verify ROUTER is None condition (line 353 in gateway.py)
+    orig_router = gateway_mod.ROUTER
+    gateway_mod.ROUTER = None
+    try:
+        res = client.post("/discover?query=test", json={"session_token": session_token})
+        assert res.status_code == 503
+    finally:
+        gateway_mod.ROUTER = orig_router
+        
+    # Test invalid signature parameter exception in register/verify (lines 273-274 in gateway.py)
+    client.post("/register/init", json={"node_id": "bad-decoding-node"})
+    res_verify_err = client.post("/register/verify", json={
+        "node_id": "bad-decoding-node",
+        "signature": "invalid-hex-string",
+        "public_key": TEST_PUB_PEM
+    })
+    assert res_verify_err.status_code == 400
+
+
+def test_param_lockdown_mismatch_verify():
+    """
+    Tests parameter lockdown verification mismatch (line 326 in agent.py).
+    """
+    agent = MockSecureAgent(
+        agent_id="lock-agent",
+        name="Lock Agent",
+        description="test",
+        tags=["lock"],
+        examples=["ex"],
+        url="http://localhost:8033"
+    )
+    agent.gateway_public_key = TEST_PUBLIC_KEY
+    
+    import time
+    det = jwt.encode(
+        {
+            "sub": "caller",
+            "aud": "lock-agent",
+            "permitted_action": "audit",
+            "restricted_params": {"user_id": 42},
+            "exp": int(time.time()) + 60
+        },
+        TEST_PRIVATE_KEY,
+        algorithm="RS256"
+    )
+    # Call verify_incoming_det with mismatching parameter value (should return False)
+    assert agent.verify_incoming_det(det, "audit", {"user_id": 99}) is False
+
+
+@pytest.mark.anyio
+async def test_mcp_handshake_verify_failure(monkeypatch):
+    """
+    Tests BFAMCP register_with_gateway verify non-200 failure branch (line 259 in mcp.py)
+    and fallback connection exceptions (line 284 in agent.py).
+    """
+    import httpx
+    from unittest.mock import MagicMock
+    
+    # Mock post to return 200 for init, but 400 for verify
+    async def mock_post_verify_fail(self, url, *args, **kwargs):
+        mock_resp = MagicMock()
+        if "register/init" in str(url):
+            mock_resp.status_code = 200
+            mock_resp.json = lambda: {"challenge_bytes": "abcchallenge"}
+        elif "register/agent" in str(url) or "register/mcp" in str(url):
+            # Raise connection exception for fallback
+            raise httpx.RequestError("Gateway connection failed")
+        else:
+            mock_resp.status_code = 400
+        return mock_resp
+        
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post_verify_fail)
+    
+    # Case A: MCP handshake fails completely
+    mcp = BFAMCP("fail-handshake-mcp", gateway_url="http://localhost:8000")
+    success = await mcp.register_with_gateway("http://localhost:8000", "http://localhost:8012")
+    assert success is False
+    
+    # Case B: Agent registration fails on fallback connection error (line 284 in agent.py)
+    agent = MockSecureAgent(
+        agent_id="fail-agent",
+        name="Fail Agent",
+        description="test",
+        tags=["fail"],
+        examples=["ex"],
+        url="http://localhost:8035",
+        gateway_url="http://localhost:8000"
+    )
+    success_agent = await agent.register_with_gateway("http://localhost:8000")
+    assert success_agent is False
+
 
 

@@ -179,7 +179,9 @@ class BFAMCP:
             
             for tool in mcp_tools:
                 input_schema = {}
-                if hasattr(tool, "input_model") and tool.input_model:
+                if hasattr(tool, "parameters") and tool.parameters:
+                    input_schema = tool.parameters
+                elif hasattr(tool, "input_model") and tool.input_model:
                     input_schema = tool.input_model.model_json_schema()
                 
                 meta = self.tool_metadata.get(tool.name, {"tags": [], "examples": []})
