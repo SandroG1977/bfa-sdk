@@ -37,6 +37,10 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
         else:
             provider = "mock"
 
+    text = ""
+    prompt_tokens = len(prompt) // 4
+    comp_tokens = 0
+
     # 1. OpenAI Provider
     if provider == "openai":
         openai_key = os.getenv("OPENAI_API_KEY", "").strip().strip("'\"")
@@ -61,7 +65,6 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                         usage = data.get("usage", {})
                         prompt_tokens = usage.get("prompt_tokens", len(prompt) // 4)
                         comp_tokens = usage.get("completion_tokens", len(text) // 4)
-                        return text, prompt_tokens, comp_tokens
                     else:
                         print(f"OpenAI API Error: {res.status_code} - {res.text}")
             except Exception as e:
@@ -86,7 +89,6 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                         usage = data.get("usageMetadata", {})
                         prompt_tokens = usage.get("promptTokenCount", len(prompt) // 4)
                         comp_tokens = usage.get("candidatesTokenCount", len(text) // 4)
-                        return text, prompt_tokens, comp_tokens
                     else:
                         print(f"Gemini API Error: {res.status_code} - {res.text}")
             except Exception as e:
@@ -110,15 +112,29 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                     text = data["message"]["content"]
                     prompt_tokens = data.get("prompt_eval_count", len(prompt) // 4)
                     comp_tokens = data.get("eval_count", len(text) // 4)
-                    return text, prompt_tokens, comp_tokens
                 else:
                     print(f"Ollama API Error: {res.status_code} - {res.text}")
         except Exception as e:
             print(f"Ollama call failed: {e}")
 
-    # 4. Fallback / Mock Provider
-    prompt_tokens = len(prompt) // 4
-    return "", prompt_tokens, 0
+    # Log custom LLM metrics to Langsmith if package is active and environment variables are set
+    try:
+        from langsmith import get_current_run_tree
+        rt = get_current_run_tree()
+        if rt:
+            rt.metadata.update({
+                "ls_provider": provider,
+                "ls_model_name": os.getenv("OPENAI_MODEL", "gpt-4o-mini") if provider == "openai" else provider
+            })
+            rt.usage_metadata = {
+                "input_tokens": prompt_tokens,
+                "output_tokens": comp_tokens,
+                "total_tokens": prompt_tokens + comp_tokens
+            }
+    except Exception as e:
+        pass
+
+    return text, prompt_tokens, comp_tokens
 
 class WriterAgent(BFAAgent):
     def __init__(self):
