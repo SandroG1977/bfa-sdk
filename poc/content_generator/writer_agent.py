@@ -126,11 +126,21 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                 "ls_provider": provider,
                 "ls_model_name": os.getenv("OPENAI_MODEL", "gpt-4o-mini") if provider == "openai" else provider
             })
-            rt.usage_metadata = {
+            usage_dict = {
                 "input_tokens": prompt_tokens,
                 "output_tokens": comp_tokens,
                 "total_tokens": prompt_tokens + comp_tokens
             }
+            # Support older Langsmith SDK versions (like 0.10.x used locally)
+            if not isinstance(rt.extra, dict):
+                rt.extra = {}
+            rt.extra["usage_metadata"] = usage_dict
+            
+            # Support newer Langsmith SDK versions
+            try:
+                rt.usage_metadata = usage_dict
+            except:
+                pass
     except Exception as e:
         pass
 

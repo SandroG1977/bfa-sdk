@@ -7,9 +7,18 @@ from a2a.server.agent_execution.context import RequestContext
 
 load_dotenv()
 
+# Defensive Langsmith integration for real-time cloud tracing
+try:
+    from langsmith import traceable
+except ImportError:
+    # Dummy fallback decorator if package is missing
+    def traceable(*args, **kwargs):
+        return lambda func: func
+
 # Configure environmental options for BFA routing
 os.environ["IRCA_CHANNELS"] = "#content"
 
+@traceable(run_type="llm", name="Extra Marketing Slogan Generation")
 async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
     """Helper to query the configured LLM provider and track token usage."""
     provider = os.getenv("LLM_PROVIDER", "").lower().strip()
@@ -20,6 +29,10 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
             provider = "gemini"
         else:
             provider = "mock"
+
+    text = ""
+    prompt_tokens = len(prompt) // 4
+    comp_tokens = 0
 
     # 1. OpenAI
     if provider == "openai":
@@ -45,7 +58,6 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                         usage = data.get("usage", {})
                         prompt_tokens = usage.get("prompt_tokens", len(prompt) // 4)
                         comp_tokens = usage.get("completion_tokens", len(text) // 4)
-                        return text, prompt_tokens, comp_tokens
             except Exception as e:
                 print(f"[EXTRA] OpenAI failed: {e}")
 
@@ -68,7 +80,6 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                         usage = data.get("usageMetadata", {})
                         prompt_tokens = usage.get("promptTokenCount", len(prompt) // 4)
                         comp_tokens = usage.get("candidatesTokenCount", len(text) // 4)
-                        return text, prompt_tokens, comp_tokens
             except Exception as e:
                 print(f"[EXTRA] Gemini failed: {e}")
 
@@ -90,13 +101,37 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                     text = data["message"]["content"]
                     prompt_tokens = data.get("prompt_eval_count", len(prompt) // 4)
                     comp_tokens = data.get("eval_count", len(text) // 4)
-                    return text, prompt_tokens, comp_tokens
         except Exception as e:
             print(f"[EXTRA] Ollama failed: {e}")
 
-    # 4. Fallback / Mock
-    prompt_tokens = len(prompt) // 4
-    return "", prompt_tokens, 0
+    # Log custom LLM metrics to Langsmith if package is active and environment variables are set
+    try:
+        from langsmith import get_current_run_tree
+        rt = get_current_run_tree()
+        if rt:
+            rt.metadata.update({
+                "ls_provider": provider,
+                "ls_model_name": os.getenv("OPENAI_MODEL", "gpt-4o-mini") if provider == "openai" else provider
+            })
+            usage_dict = {
+                "input_tokens": prompt_tokens,
+                "output_tokens": comp_tokens,
+                "total_tokens": prompt_tokens + comp_tokens
+            }
+            # Support older Langsmith SDK versions (like 0.10.x used locally)
+            if not isinstance(rt.extra, dict):
+                rt.extra = {}
+            rt.extra["usage_metadata"] = usage_dict
+            
+            # Support newer Langsmith SDK versions
+            try:
+                rt.usage_metadata = usage_dict
+            except:
+                pass
+    except Exception as e:
+        pass
+
+    return text, prompt_tokens, comp_tokens
 
 class ExtraMarketingAgent(BFAAgent):
     def __init__(self):
