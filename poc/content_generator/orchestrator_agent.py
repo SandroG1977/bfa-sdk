@@ -252,11 +252,12 @@ class OrchestratorAgent(BFAAgent):
                         },
                         "id": 100 + iteration
                     }
+                    req_headers = {k.lower(): v for k, v in context.call_context.state.get("headers", {}).items()} if context and context.call_context else {}
                     headers = {
                         "A2A-Version": "1.0",
-                        "X-Visited-Nodes": f"orchestrator-agent",
-                        "x-trace-id": context.headers.get("x-trace-id", "visual-trace-123") if context else "visual-trace-123",
-                        "x-visited-nodes": context.headers.get("x-visited-nodes", self.agent_id) if context else self.agent_id
+                        "X-Visited-Nodes": "orchestrator-agent",
+                        "x-trace-id": req_headers.get("x-trace-id", "visual-trace-123"),
+                        "x-visited-nodes": req_headers.get("x-visited-nodes", self.agent_id)
                     }
                     
                     try:
