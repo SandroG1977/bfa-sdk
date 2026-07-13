@@ -156,173 +156,208 @@ class OrchestratorAgent(BFAAgent):
         logs = []
         logs.append("🎬 [START] Orchestrator Agent received instruction: " + user_message)
 
-        # 1. Ask the LLM to plan which Gateway capability to discover
-        planner_prompt = (
-            "You are the Orchestrator Agent (OpenClaw-style planner). You receive instructions and decide which capability to query in the BFA Gateway.\n"
-            f"User instruction: '{user_message}'\n\n"
-            "We have these capabilities registered in BFA:\n"
-            "- 'research topic' (Research Agent)\n"
-            "- 'write article' (Writer Agent)\n"
-            "- 'generate slogan for product' (Extra Marketing Agent)\n"
-            "- 'get used keywords for campaign' (Keywords MCP tool)\n\n"
-            "Rules:\n"
-            "1. CRITICAL: If the user request asks to write, create, draft, compose, or generate an article, essay, text, or post (even if it also mentions research, web search, or keyword checks), you MUST select 'write article'. The Writer Agent is the one responsible for the entire content writing flow, and it will handle the research, keyword checks, and reviews internally.\n"
-            "2. Select 'research topic' ONLY if the user ONLY wants web search results or info gathering, and does NOT want to write an essay/article.\n"
-            "3. If the user wants a slogan, select 'generate slogan for product'.\n"
-            "4. If the user wants to check keywords or campaign details, select 'get used keywords for campaign'.\n\n"
-            "Respond ONLY with a valid JSON block containing:\n"
-            "{\n"
-            "  \"capability\": \"write article\" | \"research topic\" | \"generate slogan for product\" | \"get used keywords for campaign\",\n"
-            "  \"payload\": \"the exact message or payload to delegate to the target\"\n"
-            "}"
-        )
+        total_prompt_tokens = 0
+        total_comp_tokens = 0
+        final_result_text = "Task did not finish successfully."
 
-        logs.append("🧠 [STEP 1] Generating plan using Orchestrator Planner LLM...")
-        llm_res = await generate_llm_content(planner_prompt)
-        plan_text = llm_res["output"].strip()
-        p_tok = llm_res["usage_metadata"]["input_tokens"]
-        c_tok = llm_res["usage_metadata"]["output_tokens"]
-
-        total_prompt_tokens = p_tok
-        total_comp_tokens = c_tok
-
-        # Parse JSON from planner output
-        try:
-            # Clean possible markdown block markers
-            plan_clean = re.sub(r"```json\s*", "", plan_text)
-            plan_clean = re.sub(r"```\s*$", "", plan_clean).strip()
-            plan_data = json.loads(plan_clean)
-            target_capability = plan_data["capability"]
-            target_payload = plan_data["payload"]
-        except Exception as e:
-            logs.append(f"   ⚠️ [ERROR] Failed to parse planning output: {e}. Defaulting to 'write article'.")
-            target_capability = "write article"
-            target_payload = user_message
-
-        logs.append(f"   ↳ [PLAN] Selected capability: '{target_capability}' with payload: '{target_payload}'")
-
-        # 2. Query Gateway for discovery
-        logs.append(f"🔍 [STEP 2] Querying BFA Gateway to discover a handler for '{target_capability}'...")
         async with httpx.AsyncClient() as client:
-            try:
-                discover_res = await client.post(
-                    "http://127.0.0.1:8000/discover",
-                    params={"query": target_capability},
-                    json={"session_token": self.session_token},
-                    timeout=5
+            for iteration in range(5):
+                history_text = "\n".join(logs)
+                
+                planner_prompt = (
+                    "You are the Orchestrator Agent (OpenClaw-style planner). Your job is to resolve the user request step-by-step by calling specialized agents/tools via BFA Gateway.\n\n"
+                    f"User request: '{user_message}'\n\n"
+                    f"Execution History so far:\n{history_text}\n\n"
+                    "We have these capabilities registered in BFA:\n"
+                    "- 'research topic' (Research Agent - gathers web search context)\n"
+                    "- 'write article' (Writer Agent - writes/refines essays/articles)\n"
+                    "- 'generate slogan for product' (Extra Marketing Agent - slogans)\n"
+                    "- 'get used keywords for campaign' (Keywords MCP tool - campaign forbidden words)\n"
+                    "- 'review draft' (Reviewer Agent - critiques articles/drafts)\n\n"
+                    "Decide the next logical action. Rules:\n"
+                    "1. If you need search/context, call 'research topic'.\n"
+                    "2. If you need forbidden keywords, call 'get used keywords for campaign'.\n"
+                    "3. If you have research/keywords (or don't need them) and need to write the initial draft, call 'write article'. Include the research context and campaign keywords in the payload instructions.\n"
+                    "4. If you have a draft and need critique, call 'review draft'.\n"
+                    "5. If you have a draft and critique and need to refine, call 'write article' with the critique instructions.\n"
+                    "6. If the task is fully completed (e.g. you have the final refined essay/slogan/output), return the final generated content and set status to DONE.\n\n"
+                    "Respond ONLY with a JSON block containing:\n"
+                    "{\n"
+                    "  \"status\": \"CONTINUE\" | \"DONE\",\n"
+                    "  \"capability\": \"the gateway capability string to discover (null if DONE)\",\n"
+                    "  \"payload\": \"the exact message payload to send to the target (null if DONE)\",\n"
+                    "  \"final_output\": \"the final output text to return to the user (null if CONTINUE)\"\n"
+                    "}"
                 )
-                if discover_res.status_code != 200:
-                    return f"Gateway Discovery Failed: {discover_res.text}"
 
-                discovery_data = discover_res.json()
-                target_url = discovery_data["url"]
-                node_type = discovery_data.get("type", "agent")
-                
-                logs.append(f"   ↳ [SUCCESS] Gateway matched capability to: {target_url} ({node_type})")
-            except Exception as e:
-                return f"Discovery Request Failed: {e}"
-
-            # 3. Delegation Execution (A2A or P2P tool call)
-            logs.append(f"🚀 [STEP 3] Delegating execution to handler {target_url} via BFA protocol...")
-            if node_type == "agent":
-                # A2A SendMessage
-                rpc_payload = {
-                    "jsonrpc": "2.0",
-                    "method": "SendMessage",
-                    "params": {
-                        "message": {
-                            "role": 1,
-                            "message_id": "msg-orchestrator-delegation-001",
-                            "context_id": "ctx-orchestrator-delegation-001",
-                            "parts": [{"text": target_payload}]
-                        }
-                    },
-                    "id": 500
-                }
-                headers = {
-                    "A2A-Version": "1.0",
-                    "X-Visited-Nodes": "orchestrator-agent"
-                }
-                
+                logs.append(f"🧠 [PLANNING ITERATION {iteration + 1}] Analyzing state...")
                 try:
-                    agent_res = await client.post(target_url, json=rpc_payload, headers=headers, timeout=35)
-                    if agent_res.status_code == 200:
-                        raw_resp = agent_res.json()["result"]["message"]["parts"][0]["text"]
-                        
-                        # Extract metrics if present
-                        metrics_match = re.search(r"\[TOTAL_METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]", raw_resp)
-                        if not metrics_match:
-                            metrics_match = re.search(r"\[METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]", raw_resp)
-                            
-                        if metrics_match:
-                            sub_p = int(metrics_match.group(1))
-                            sub_c = int(metrics_match.group(2))
-                            clean_resp = raw_resp.split("\n[METRICS:")[0].split("\n[TOTAL_METRICS:")[0].strip()
-                            total_prompt_tokens += sub_p
-                            total_comp_tokens += sub_c
-                        else:
-                            clean_resp = raw_resp
-                        
-                        logs.append("🏁 [FINISH] Dynamic delegation completed successfully.")
-                        
-                        final_output = (
-                            "=== Orchestrator Agent Execution Steps ===\n"
-                            + "\n".join(logs) + "\n\n"
-                            + f"=== Result from Discovered Node ({target_url}) ===\n"
-                            + f"{clean_resp}\n"
-                            + f"[TOTAL_METRICS: prompt_tokens={total_prompt_tokens}, completion_tokens={total_comp_tokens}]"
-                        )
-                        
-                        # Report tokens to Gateway
-                        try:
-                            await client.post(
-                                "http://127.0.0.1:8000/report-tokens",
-                                json={"prompt_tokens": total_prompt_tokens, "completion_tokens": total_comp_tokens},
-                                timeout=2
-                            )
-                        except:
-                            pass
-                            
-                        return final_output
-                    else:
-                        return f"Delegation HTTP Error {agent_res.status_code}: {agent_res.text}"
+                    llm_res = await generate_llm_content(planner_prompt)
+                    plan_text = llm_res["output"].strip()
+                    total_prompt_tokens += llm_res["usage_metadata"]["input_tokens"]
+                    total_comp_tokens += llm_res["usage_metadata"]["output_tokens"]
+                    
+                    # Clean possible markdown block markers
+                    plan_clean = re.sub(r"```json\s*", "", plan_text)
+                    plan_clean = re.sub(r"```\s*$", "", plan_clean).strip()
+                    plan_data = json.loads(plan_clean)
                 except Exception as e:
-                    return f"Delegation Connection Failed: {e}"
-            else:
-                # P2P Tool Call (for KeywordsMCP)
-                # Parse campaign_id from payload or default
-                campaign_match = re.search(r"campaign\s+(\S+)", target_payload, re.IGNORECASE)
-                campaign_id = campaign_match.group(1) if campaign_match else "camp-123"
-                
+                    logs.append(f"   ⚠️ [ERROR] Failed to plan next step: {e}. Aborting planner loop.")
+                    break
+
+                if plan_data.get("status") == "DONE":
+                    final_result_text = plan_data.get("final_output") or "Done."
+                    logs.append("🏁 [FINISH] Planner loop successfully completed all steps.")
+                    break
+
+                target_capability = plan_data.get("capability")
+                target_payload = plan_data.get("payload")
+                if not target_capability or not target_payload:
+                    logs.append("   ⚠️ [ERROR] Planner returned empty capability or payload. Aborting.")
+                    break
+
+                logs.append(f"🔍 [STEP] Querying BFA Gateway to discover handler for '{target_capability}'...")
                 try:
-                    tool_res = await client.post(
-                        f"{target_url.rstrip('/')}/tools",
-                        json={
-                            "tool": "get_used_keywords",
-                            "arguments": {
-                                "delegated_token": discovery_data.get("det", "dummy-det"),
-                                "campaign_id": campaign_id
-                            }
-                        },
+                    discover_res = await client.post(
+                        "http://127.0.0.1:8000/discover",
+                        params={"query": target_capability},
+                        json={"session_token": self.session_token},
                         timeout=5
                     )
-                    if tool_res.status_code == 200:
-                        mcp_data = json.loads(tool_res.json())
-                        used_keywords = mcp_data.get("used_keywords", [])
-                        logs.append("🏁 [FINISH] P2P Tool execution completed successfully.")
-                        
-                        final_output = (
-                            "=== Orchestrator Agent Execution Steps ===\n"
-                            + "\n".join(logs) + "\n\n"
-                            + f"=== Result from Discovered MCP Server ({target_url}) ===\n"
-                            + f"Campaign '{campaign_id}' forbidden keywords: {used_keywords}\n"
-                            + f"[TOTAL_METRICS: prompt_tokens={total_prompt_tokens}, completion_tokens={total_comp_tokens}]"
-                        )
-                        return final_output
-                    else:
-                        return f"MCP Tool Invocation Rejected: {tool_res.text}"
+                    if discover_res.status_code != 200:
+                        logs.append(f"   ⚠️ [ERROR] Gateway discovery failed: {discover_res.text}")
+                        break
+                    
+                    discovery_data = discover_res.json()
+                    target_url = discovery_data["url"]
+                    node_type = discovery_data.get("type", "agent")
+                    logs.append(f"   ↳ [SUCCESS] Gateway matched capability to: {target_url} ({node_type})")
                 except Exception as e:
-                    return f"MCP Tool Connection Failed: {e}"
+                    logs.append(f"   ⚠️ [ERROR] Gateway connection failed: {e}")
+                    break
+
+                # Execution
+                if node_type == "agent":
+                    # A2A SendMessage
+                    rpc_payload = {
+                        "jsonrpc": "2.0",
+                        "method": "SendMessage",
+                        "params": {
+                            "message": {
+                                "role": 1,
+                                "message_id": f"orchestrator-msg-{iteration}",
+                                "context_id": "orchestrator-context",
+                                "parts": [{"text": target_payload}]
+                            }
+                        },
+                        "id": 100 + iteration
+                    }
+                    headers = {
+                        "A2A-Version": "1.0",
+                        "X-Visited-Nodes": f"orchestrator-agent",
+                        "x-trace-id": context.headers.get("x-trace-id", "visual-trace-123") if context else "visual-trace-123",
+                        "x-visited-nodes": context.headers.get("x-visited-nodes", self.agent_id) if context else self.agent_id
+                    }
+                    
+                    try:
+                        agent_res = await client.post(target_url, json=rpc_payload, headers=headers, timeout=40)
+                        if agent_res.status_code == 200:
+                            raw_resp = agent_res.json()["result"]["message"]["parts"][0]["text"]
+                            
+                            # Extract metrics
+                            metrics_match = re.search(r"\[METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]", raw_resp)
+                            if metrics_match:
+                                sub_p = int(metrics_match.group(1))
+                                sub_c = int(metrics_match.group(2))
+                                clean_resp = raw_resp.split("\n[METRICS:")[0].strip()
+                                total_prompt_tokens += sub_p
+                                total_comp_tokens += sub_c
+                            else:
+                                clean_resp = raw_resp
+                                
+                            logs.append(f"   ↳ [RESPONSE FROM {target_capability}]: {clean_resp}")
+                        else:
+                            # Check for A2A loop rejection
+                            err_text = agent_res.text
+                            if "Circular Loop Detected" in err_text:
+                                logs.append("   🚨 [LOOP DETECTED] Gateway or Agent rejected request: Circular A2A dependency loop detected!")
+                                return (
+                                    "=== Orchestrator Agent Execution Steps ===\n"
+                                    + "\n".join(logs) + "\n\n"
+                                    "❌ SECURITY SYSTEM BLOCK: Starlette Header-Tracing Middleware blocked circular loop execution."
+                                )
+                            logs.append(f"   ⚠️ [ERROR] Node returned status {agent_res.status_code}: {agent_res.text}")
+                            break
+                    except Exception as e:
+                        logs.append(f"   ⚠️ [ERROR] Connection to node failed: {e}")
+                        break
+                else:
+                    # P2P Tool Call (MCP Server)
+                    campaign_match = re.search(r"campaign\s+(\S+)", target_payload, re.IGNORECASE)
+                    campaign_id = campaign_match.group(1) if campaign_match else "camp-123"
+                    
+                    # If this is simulated hack mode, use camp-999 to trigger parameter lockdown rejection
+                    if "hack" in user_message.lower():
+                        campaign_id = "camp-999"
+
+                    try:
+                        tool_res = await client.post(
+                            f"{target_url.rstrip('/')}/tools",
+                            json={
+                                "tool": "get_used_keywords",
+                                "arguments": {
+                                    "delegated_token": discovery_data.get("det", "dummy-det"),
+                                    "campaign_id": campaign_id
+                                }
+                            },
+                            timeout=5
+                        )
+                        if tool_res.status_code == 200:
+                            mcp_data = json.loads(tool_res.json())
+                            used_keywords = mcp_data.get("used_keywords", [])
+                            logs.append(f"   ↳ [RESPONSE FROM {target_capability}]: Forbidden keywords for '{campaign_id}' are: {used_keywords}")
+                        else:
+                            err_text = tool_res.text
+                            if "Parameter Lockdown" in err_text or "forbidden" in err_text.lower():
+                                logs.append("   🚨 [BLOCKED] P2P call failed parameter lockdown validation check!")
+                                return (
+                                    "=== Orchestrator Agent Execution Steps ===\n"
+                                    + "\n".join(logs) + "\n\n"
+                                    "❌ SECURITY TRANSACTION BLOCKED: Unauthorized campaign_id parameter in Delegated Execution Token."
+                                )
+                            logs.append(f"   ⚠️ [ERROR] MCP tool returned status {tool_res.status_code}: {tool_res.text}")
+                            break
+                    except Exception as e:
+                        logs.append(f"   ⚠️ [ERROR] MCP connection failed: {e}")
+                        break
+            else:
+                logs.append("⚠️ [TIMEOUT] Max planning iterations (5) reached without finishing.")
+                final_result_text = "Task execution timed out during planning."
+
+        # Centralized token metric reporting to Gateway
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "http://127.0.0.1:8000/report-tokens",
+                    json={"prompt_tokens": total_prompt_tokens, "completion_tokens": total_comp_tokens},
+                    timeout=2
+                )
+        except Exception:
+            pass
+
+        # Determine visual header output format
+        if "essay" in user_message.lower() or "artic" in user_message.lower():
+            output_header = "=== Final Refined Essay ==="
+        else:
+            output_header = f"=== Result from Discovered Node (http://127.0.0.1:8101) ==="
+
+        return (
+            "=== Orchestrator Agent Execution Steps ===\n"
+            + "\n".join(logs) + "\n\n"
+            + f"{output_header}\n"
+            + f"{final_result_text}\n\n"
+            + f"[TOTAL_METRICS: prompt_tokens={total_prompt_tokens}, completion_tokens={total_comp_tokens}]"
+        )
 
 agent_instance = OrchestratorAgent()
 app = agent_instance.app

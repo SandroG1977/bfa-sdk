@@ -408,86 +408,42 @@ class WriterAgent(BFAAgent):
                     "X-Visited-Nodes": "writer-agent"
                 }
 
-                logs.append("🤝 [STEP 4] Sending initial draft to Reviewer Agent (http://127.0.0.1:8103) via A2A protocol for critique...")
-                rev_res = await client.post(
-                    "http://127.0.0.1:8103/",
-                    json=rpc_payload,
-                    headers=headers,
-                    timeout=5
+    async def run(self, user_message: str, context: RequestContext) -> str:
+        """
+        Pure text writing/refinement node.
+        Receives writing instructions and calls the LLM provider directly to generate content.
+        """
+        # Determine if this is a refinement task or an initial draft
+        if "refine" in user_message.lower() or "critique" in user_message.lower():
+            system_instruction = (
+                "You are a professional content editor. Refine the given draft based on the provided critique instructions.\n"
+                "Incorporate all corrections and improvements. Respond ONLY with the final refined text, without any conversational intro/outro or surrounding markdown formatting."
+            )
+        else:
+            system_instruction = (
+                "You are an expert article writer. Draft a high-quality, engaging, and professional 2-paragraph essay or article based on the provided topic and constraints.\n"
+                "Respond ONLY with the generated text, without any conversational intro/outro, headers, or surrounding markdown formatting."
+            )
+
+        prompt = f"{system_instruction}\n\nUser request & instructions:\n{user_message}"
+        
+        llm_res = await generate_llm_content(prompt)
+        text = llm_res["output"].strip()
+        p_tok = llm_res["usage_metadata"]["input_tokens"]
+        c_tok = llm_res["usage_metadata"]["output_tokens"]
+
+        # Report tokens dynamically to BFA Gateway for centralized dashboard tracking
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "http://127.0.0.1:8000/report-tokens",
+                    json={"prompt_tokens": p_tok, "completion_tokens": c_tok},
+                    timeout=2
                 )
-
-                if rev_res.status_code != 200:
-                    return f"A2A Review Request Failed: {rev_res.text}"
-
-                rev_data = rev_res.json()
-                raw_critique = rev_data["result"]["message"]["parts"][0]["text"]
-
-                # Parse reviewer tokens from A2A payload
-                reviewer_prompt_tokens = 0
-                reviewer_comp_tokens = 0
-                metrics_match = re.search(
-                    r"\[METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]",
-                    raw_critique
-                )
-                if metrics_match:
-                    reviewer_prompt_tokens = int(metrics_match.group(1))
-                    reviewer_comp_tokens = int(metrics_match.group(2))
-                    critique = raw_critique.split("\n[METRICS:")[0].strip()
-                else:
-                    critique = raw_critique
-
-                total_prompt_tokens += reviewer_prompt_tokens
-                total_comp_tokens += reviewer_comp_tokens
-                
-                logs.append(f"   ↳ [SUCCESS] Reviewer Agent returned review critique:\n     \"{critique}\"")
-
-                # 5. Final Refinement incorporating critique
-                refinement_prompt = (
-                    f"Refine this initial draft:\n{draft}\n\n"
-                    f"Incorporate this review critique:\n{critique}\n\n"
-                    "Provide only the updated refined text directly."
-                )
-                
-                logs.append(f"✨ [STEP 5] Calling Writer Agent LLM ({provider}) to refine the draft based on peer critique...")
-                llm_res2 = await generate_llm_content(refinement_prompt)
-                real_final = llm_res2["output"]
-                p_tok2 = llm_res2["usage_metadata"]["input_tokens"]
-                c_tok2 = llm_res2["usage_metadata"]["output_tokens"]
-                total_prompt_tokens += p_tok2
-                total_comp_tokens += c_tok2
-
-                if real_final:
-                    final_essay = real_final.strip()
-                else:
-                    final_essay = f"Refined essay on '{topic}' resolving critique: '{critique}'."
-                    total_comp_tokens += len(final_essay) // 4
-
-                logs.append("🏁 [FINISH] Collaborative multi-agent workflow completed successfully.")
-
-                final_output = (
-                    "=== Multi-Agent Execution Steps & Route Trace ===\n"
-                    + "\n".join(logs) + "\n\n"
-                    f"=== Outlining & Drafting ===\n{outline}\n\n"
-                    f"=== Initial Draft ===\n{draft}\n\n"
-                    f"=== Review Critique received ===\n{critique}\n\n"
-                    f"=== Final Refined Essay ===\n{final_essay}\n"
-                    f"[TOTAL_METRICS: prompt_tokens={total_prompt_tokens}, completion_tokens={total_comp_tokens}]"
-                )
-
-                # Report tokens dynamically to BFA Gateway for centralized counter visibility
-                try:
-                    await client.post(
-                        "http://127.0.0.1:8000/report-tokens",
-                        json={"prompt_tokens": total_prompt_tokens, "completion_tokens": total_comp_tokens},
-                        timeout=2
-                    )
-                except Exception as e:
-                    print(f"BFAAgent Warning: Failed to report tokens to Gateway: {e}")
-
-                return final_output
-
         except Exception as e:
-            return f"Error executing Multi-Agent content flow: {e}"
+            print(f"BFAAgent Warning: Failed to report tokens to Gateway: {e}")
+
+        return f"{text}\n[METRICS: prompt_tokens={p_tok}, completion_tokens={c_tok}]"
 
 agent_instance = WriterAgent()
 app = agent_instance.app
