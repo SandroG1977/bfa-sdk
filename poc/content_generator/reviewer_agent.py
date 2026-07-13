@@ -201,7 +201,10 @@ class ReviewerAgent(BFAAgent):
             "Review this draft essay. Write a single, brief sentence suggesting one specific "
             f"constructive improvement for the text:\n\n{user_message}"
         )
-        real_critique, prompt_tokens, comp_tokens = await generate_llm_content(prompt)
+        llm_res = await generate_llm_content(prompt)
+        real_critique = llm_res["output"]
+        prompt_tokens = llm_res["usage_metadata"]["input_tokens"]
+        comp_tokens = llm_res["usage_metadata"]["output_tokens"]
         
         if real_critique:
             critique = f"Critique (via LLM): {real_critique.strip()}"

@@ -305,7 +305,10 @@ class WriterAgent(BFAAgent):
                         "Write the essay content directly without introductory remarks or meta-text."
                     )
                     logs.append(f"✍️ [STEP 3] Calling Writer Agent LLM ({provider}) to draft initial essay...")
-                    real_draft, p_tok1, c_tok1 = await generate_llm_content(llm_prompt)
+                    llm_res1 = await generate_llm_content(llm_prompt)
+                    real_draft = llm_res1["output"]
+                    p_tok1 = llm_res1["usage_metadata"]["input_tokens"]
+                    c_tok1 = llm_res1["usage_metadata"]["output_tokens"]
                     total_prompt_tokens += p_tok1
                     total_comp_tokens += c_tok1
 
@@ -377,7 +380,10 @@ class WriterAgent(BFAAgent):
                 )
                 
                 logs.append(f"✨ [STEP 5] Calling Writer Agent LLM ({provider}) to refine the draft based on peer critique...")
-                real_final, p_tok2, c_tok2 = await generate_llm_content(refinement_prompt)
+                llm_res2 = await generate_llm_content(refinement_prompt)
+                real_final = llm_res2["output"]
+                p_tok2 = llm_res2["usage_metadata"]["input_tokens"]
+                c_tok2 = llm_res2["usage_metadata"]["output_tokens"]
                 total_prompt_tokens += p_tok2
                 total_comp_tokens += c_tok2
 
