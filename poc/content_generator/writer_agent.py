@@ -162,7 +162,7 @@ class WriterAgent(BFAAgent):
             description="Generates campaign articles while avoiding duplicate keywords.",
             tags=["writer", "content", "essay"],
             examples=["write article", "generate essay for campaign"],
-            url="http://127.0.0.1:8101"
+            url="http://127.0.0.1:8106"
         )
 
     async def run(self, user_message: str, context: RequestContext) -> str:
@@ -300,6 +300,63 @@ class WriterAgent(BFAAgent):
                     except Exception as e:
                         logs.append(f"   ⚠️ [ERROR] Slogan agent communication failed: {e}. Falling back to local generation.")
 
+                # 2.7. Research Phase (if not a slogan)
+                research_context = ""
+                if not is_slogan:
+                    logs.append("🔍 [STEP 2.7] Essay request detected. Querying BFA Gateway for research capability...")
+                    try:
+                        research_discover = await client.post(
+                            "http://127.0.0.1:8000/discover",
+                            params={"query": "research topic"},
+                            json={"session_token": self.session_token},
+                            timeout=5
+                        )
+                        if research_discover.status_code == 200:
+                            research_data = research_discover.json()
+                            research_url = research_data["url"]
+                            
+                            logs.append(f"   ↳ [MATCH] Gateway matched capability to: Research Agent ({research_url})")
+                            logs.append(f"🚀 [A2A DELEGATION] Routing research task to Research Agent ({research_url}) via A2A protocol...")
+                            
+                            # Construct A2A message payload
+                            rpc_payload = {
+                                "jsonrpc": "2.0",
+                                "method": "SendMessage",
+                                "params": {
+                                    "message": {
+                                        "role": 1,
+                                        "message_id": "msg-a2a-research-001",
+                                        "context_id": "ctx-a2a-research-001",
+                                        "parts": [{"text": topic}]
+                                    }
+                                },
+                                "id": 102
+                            }
+                            headers = {
+                                "A2A-Version": "1.0",
+                                "X-Visited-Nodes": "writer-agent"
+                            }
+                            research_res = await client.post(research_url, json=rpc_payload, headers=headers, timeout=12)
+                            if research_res.status_code == 200:
+                                raw_research_resp = research_res.json()["result"]["message"]["parts"][0]["text"]
+                                r_match = re.search(r"\[METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]", raw_research_resp)
+                                if r_match:
+                                    r_p_tok = int(r_match.group(1))
+                                    r_c_tok = int(r_match.group(2))
+                                    research_context = raw_research_resp.split("\n[METRICS:")[0].strip()
+                                    total_prompt_tokens += r_p_tok
+                                    total_comp_tokens += r_c_tok
+                                else:
+                                    research_context = raw_research_resp
+                                
+                                logs.append(f"   ↳ [SUCCESS] Research Agent returned context (length {len(research_context)} chars)")
+                            else:
+                                logs.append(f"   ⚠️ [ERROR] Research agent HTTP {research_res.status_code}. Proceeding without research.")
+                        else:
+                            logs.append("   ⚠️ [NO MATCH] Gateway found no active research agent. Proceeding without research.")
+                    except Exception as e:
+                        logs.append(f"   ⚠️ [ERROR] Research agent communication failed: {e}. Proceeding without research.")
+
                 # 3. Content Generation
                 if delegated_text:
                     draft = delegated_text
@@ -310,8 +367,12 @@ class WriterAgent(BFAAgent):
                     llm_prompt = (
                         f"Write a short, engaging 2-paragraph essay about '{topic}'. "
                         f"Crucial rule: You MUST NOT use any of these words: {used_keywords}. "
-                        "Write the essay content directly without introductory remarks or meta-text."
                     )
+                    if research_context:
+                        llm_prompt += f"\nUse the following background research to ground your facts:\n{research_context}\n"
+                    
+                    llm_prompt += "\nWrite the essay content directly without introductory remarks or meta-text."
+                    
                     logs.append(f"✍️ [STEP 3] Calling Writer Agent LLM ({provider}) to draft initial essay...")
                     llm_res1 = await generate_llm_content(llm_prompt)
                     real_draft = llm_res1["output"]
@@ -431,228 +492,6 @@ class WriterAgent(BFAAgent):
 agent_instance = WriterAgent()
 app = agent_instance.app
 
-# Serve Visualizer HTML Dashboard
-async def serve_dashboard(request):
-    template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
-    if os.path.exists(template_path):
-        with open(template_path, "r", encoding="utf-8") as f:
-            return HTMLResponse(f.read())
-    return HTMLResponse("<h1>Visualizer Dashboard Template Not Found</h1>", status_code=404)
-
-# Endpoint to check which API Key is loaded in the .env file
-async def api_status(request):
-    provider = os.getenv("LLM_PROVIDER", "").lower().strip()
-    if not provider:
-        if os.getenv("OPENAI_API_KEY", "").strip().strip("'\""):
-            provider = "openai"
-        elif (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")).strip().strip("'\""):
-            provider = "gemini"
-        else:
-            provider = "mock"
-    return JSONResponse({"provider": provider})
-
-# Proxy endpoint to check online status of all registered nodes without browser CORS issues
-async def get_nodes_status(request):
-    gateway_online = False
-    status_list = []
-    try:
-        async with httpx.AsyncClient() as client:
-            try:
-                res_gw = await client.get("http://127.0.0.1:8000/", timeout=1)
-                if res_gw.status_code == 200:
-                    gateway_online = True
-            except:
-                pass
-            
-            if gateway_online:
-                res = await client.get("http://127.0.0.1:8000/skills", timeout=2)
-                if res.status_code == 200:
-                    skills = res.json()
-                    unique_nodes = {}
-                    for item in skills.values():
-                        url = item.get("url") or item.get("server_url")
-                        if not url:
-                            continue
-                        
-                        port = ""
-                        try:
-                            from urllib.parse import urlparse
-                            u = urlparse(url)
-                            port = f"(:{u.port})" if u.port else ""
-                        except:
-                            pass
-                        
-                        clean_url = url.rstrip('/')
-                        if item.get("type") == "agent":
-                            unique_nodes[clean_url] = {
-                                "name": f"{item.get('name', 'Agent')} {port}",
-                                "check_url": f"{clean_url}/.well-known/agent-card.json"
-                            }
-                        else:
-                            server_name = "Keywords MCP" if item.get("name") in ["get_used_keywords", "reserve_keyword"] else "MCP Server"
-                            unique_nodes[clean_url] = {
-                                "name": f"{server_name} {port}",
-                                "check_url": f"{clean_url}/tools"
-                            }
-                    
-                    # Check online status of each node server-side
-                    for clean_url, node in unique_nodes.items():
-                        node_online = False
-                        try:
-                            test_res = await client.get(node["check_url"], timeout=1)
-                            if test_res.status_code == 200:
-                                node_online = True
-                        except:
-                            pass
-                        status_list.append({
-                            "name": node["name"],
-                            "online": node_online
-                        })
-    except Exception as e:
-        print(f"Error checking nodes status: {e}")
-    
-    return JSONResponse({
-        "gateway_online": gateway_online,
-        "nodes": status_list
-    })
-
-# Proxy route to pull skills list from BFA Gateway server-side (prevents browser CORS errors)
-async def get_gateway_skills(request):
-    try:
-        async with httpx.AsyncClient() as client:
-            res = await client.get("http://127.0.0.1:8000/skills", timeout=2)
-            if res.status_code == 200:
-                return JSONResponse(res.json())
-            return JSONResponse({"error": f"Gateway returned {res.status_code}"}, status_code=res.status_code)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-# Proxy route to pull token metrics from BFA Gateway server-side (prevents browser CORS errors)
-async def get_gateway_token_metrics(request):
-    try:
-        async with httpx.AsyncClient() as client:
-            res = await client.get("http://127.0.0.1:8000/token-metrics", timeout=2)
-            if res.status_code == 200:
-                return JSONResponse(res.json())
-            return JSONResponse({"error": f"Gateway returned {res.status_code}"}, status_code=res.status_code)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-# Action trigger endpoint to run the different POC flows
-async def run_visual_flow(request):
-    flow_type = request.path_params.get("flow_type")
-    body = await request.json()
-    query_text = body.get("query", "")
-    
-    async with httpx.AsyncClient() as client:
-        headers = {"A2A-Version": "1.0"}
-        
-        if flow_type == "normal":
-            rpc_payload = {
-                "jsonrpc": "2.0",
-                "method": "SendMessage",
-                "params": {
-                    "message": {
-                        "role": 1,
-                        "message_id": "visual-msg-1",
-                        "context_id": "visual-ctx-1",
-                        "parts": [{"text": query_text}]
-                    }
-                },
-                "id": 1
-            }
-            res = await client.post("http://127.0.0.1:8101/", json=rpc_payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                res_data = res.json()
-                if "error" in res_data:
-                    return JSONResponse({"error": res_data["error"]["message"]})
-                
-                raw_result = res_data["result"]["message"]["parts"][0]["text"]
-                total_prompt = 0
-                total_comp = 0
-                
-                metrics_match = re.search(
-                    r"\[TOTAL_METRICS:\s*prompt_tokens=(\d+),\s*completion_tokens=(\d+)\]",
-                    raw_result
-                )
-                if metrics_match:
-                    total_prompt = int(metrics_match.group(1))
-                    total_comp = int(metrics_match.group(2))
-                    result_text = raw_result.split("[TOTAL_METRICS:")[0].strip()
-                else:
-                    result_text = raw_result
-                
-                return JSONResponse({
-                    "result": result_text,
-                    "tokens": {
-                        "prompt_tokens": total_prompt,
-                        "completion_tokens": total_comp,
-                        "total_tokens": total_prompt + total_comp
-                    }
-                })
-            return JSONResponse({"error": f"HTTP Error {res.status_code}: {res.text}"})
-            
-        elif flow_type == "hack":
-            rpc_payload = {
-                "jsonrpc": "2.0",
-                "method": "SendMessage",
-                "params": {
-                    "message": {
-                        "role": 1,
-                        "message_id": "visual-msg-2",
-                        "context_id": "visual-ctx-2",
-                        "parts": [{"text": f"{query_text} hack"}],
-                    }
-                },
-                "id": 2
-            }
-            res = await client.post("http://127.0.0.1:8101/", json=rpc_payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                res_data = res.json()
-                if "error" in res_data:
-                    return JSONResponse({"error": res_data["error"]["message"]})
-                
-                raw_result = res_data["result"]["message"]["parts"][0]["text"]
-                return JSONResponse({
-                    "result": raw_result,
-                    "tokens": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-                })
-            return JSONResponse({"error": f"HTTP Error {res.status_code}: {res.text}"})
-            
-        elif flow_type == "loop":
-            rpc_payload = {
-                "jsonrpc": "2.0",
-                "method": "SendMessage",
-                "params": {
-                    "message": {
-                        "role": 1,
-                        "message_id": "visual-msg-3",
-                        "context_id": "visual-ctx-3",
-                        "parts": [{"text": "loop"}]
-                    }
-                },
-                "id": 3
-            }
-            res = await client.post("http://127.0.0.1:8103/", json=rpc_payload, headers=headers, timeout=30)
-            if res.status_code == 200:
-                res_data = res.json()
-                if "error" in res_data:
-                    return JSONResponse({"result": f"Status: 409, Body: {json.dumps(res_data)}"})
-                
-                raw_result = res_data["result"]["message"]["parts"][0]["text"]
-                return JSONResponse({
-                    "result": raw_result,
-                    "tokens": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-                })
-            return JSONResponse({"result": f"Status: {res.status_code}, Body: {res.text}"})
-
-from starlette.routing import Route
-app.routes.append(Route("/", serve_dashboard, methods=["GET"]))
-app.routes.append(Route("/api-status", api_status, methods=["GET"]))
-app.routes.append(Route("/api-status/nodes", get_nodes_status, methods=["GET"]))
-app.routes.append(Route("/api/gateway/skills", get_gateway_skills, methods=["GET"]))
-app.routes.append(Route("/api/gateway/token-metrics", get_gateway_token_metrics, methods=["GET"]))
-app.routes.append(Route("/run-flow/{flow_type}", run_visual_flow, methods=["POST"]))
-
 if __name__ == "__main__":
-    uvicorn.run("writer_agent:app", host="127.0.0.1", port=8101, log_level="warning")
+    print("[WRITER] Starting WriterAgent on port 8106...")
+    uvicorn.run("writer_agent:app", host="127.0.0.1", port=8106, log_level="warning")
