@@ -118,12 +118,13 @@ async def generate_llm_content(prompt: str) -> tuple[str, int, int]:
                 "output_tokens": comp_tokens,
                 "total_tokens": prompt_tokens + comp_tokens
             }
-            # Support older Langsmith SDK versions (like 0.10.x used locally)
+            # Set usage metadata using the official SDK set method
+            rt.set(usage_metadata=usage_dict)
+            
+            # Support older/custom serialization fallbacks
             if not isinstance(rt.extra, dict):
                 rt.extra = {}
             rt.extra["usage_metadata"] = usage_dict
-            
-            # Support newer Langsmith SDK versions
             try:
                 rt.usage_metadata = usage_dict
             except:
