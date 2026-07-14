@@ -74,6 +74,29 @@ pip install git+https://github.com/SandroG1977/bfa-sdk.git@feature/docstrings-in
 
 ---
 
+## Despliegue con Docker (Contenedor del Gateway BFA)
+
+Podés ejecutar el Gateway BFA (incluyendo su enrutador semántico de búsqueda vectorial y el panel de control interactivo en modo oscuro) como un microservicio contenedorizado usando Docker o Docker Compose.
+
+### Opción A: Usando Docker Compose (Recomendado)
+Cloná el repositorio y levantá el contenedor localmente:
+```bash
+docker-compose up --build -d
+```
+
+### Opción B: Descargar desde Docker Hub
+Para ejecutar la imagen precompilada del Gateway directamente:
+```bash
+docker run -d \
+  -p 8000:8000 \
+  --name bfa-gateway \
+  -e OPENAI_API_KEY="tu-openai-api-key" \
+  sandrog1977/bfa-gateway:latest
+```
+Accedé al panel visual interactivo desde tu navegador en `http://127.0.0.1:8000/`.
+
+---
+
 ## Ejecución de la Demo
 
 ### 2. Ejecutar la Demo MDBank

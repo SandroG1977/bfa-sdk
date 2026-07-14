@@ -74,6 +74,29 @@ pip install git+https://github.com/SandroG1977/bfa-sdk.git@feature/docstrings-in
 
 ---
 
+## Docker Deployment (BFA Gateway Container)
+
+You can run the BFA Gateway (including its semantic search router and dark-mode management dashboard) as a containerized microservice using Docker or Docker Compose.
+
+### Option A: Using Docker Compose (Recommended)
+Clone the repository and run the container locally:
+```bash
+docker-compose up --build -d
+```
+
+### Option B: Pulling from Docker Hub
+To run the pre-built gateway image directly:
+```bash
+docker run -d \
+  -p 8000:8000 \
+  --name bfa-gateway \
+  -e OPENAI_API_KEY="your-openai-api-key" \
+  sandrog1977/bfa-gateway:latest
+```
+Access the visual dashboard in your browser at `http://127.0.0.1:8000/`.
+
+---
+
 ## Running the Demo
 
 ### 2. Run the MDBank Demo
