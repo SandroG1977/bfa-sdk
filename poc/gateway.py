@@ -558,4 +558,6 @@ async def gateway_root(request: Request):
         }
 
 if __name__ == "__main__":
-    uvicorn.run("gateway:app", host="127.0.0.1", port=8000, log_level="warning")
+    host = os.getenv("BFA_GATEWAY_HOST", "127.0.0.1")
+    port = int(os.getenv("BFA_GATEWAY_PORT", "8000"))
+    uvicorn.run("gateway:app", host=host, port=port, log_level="warning")
