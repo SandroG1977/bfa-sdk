@@ -95,6 +95,36 @@ docker run -d \
 ```
 Accedé al panel visual interactivo desde tu navegador en `http://127.0.0.1:8000/`.
 
+### Conexión de Agentes y Servidores MCP Remotos
+
+Una vez que tu contenedor de Gateway está corriendo en un servidor (por ejemplo, en `http://IP_DE_TU_SERVIDOR:8000`), podés conectar dinámicamente agentes y herramientas desde cualquier ubicación.
+
+#### 1. Auto-registro Automático (Recomendado)
+Configurá tu agente al instanciar `BFAAgent` indicando la URL del Gateway del servidor:
+```python
+agent = MiAgente(
+    agent_id="mi-agent-id",
+    name="Mi Agente",
+    url="http://IP_LOCAL_DE_TU_AGENTE:8080",
+    gateway_url="http://IP_DE_TU_SERVIDOR:8000"
+)
+```
+Al arrancar, el agente realizará automáticamente el handshake criptográfico y se registrará en el índice FAISS del Gateway remoto.
+
+#### 2. Registro Manual (cURL)
+Podés registrar manualmente cualquier agente o servidor MCP enviando una solicitud HTTP:
+
+* **Registrar un Agente:**
+  ```bash
+  curl -X POST "http://IP_DE_TU_SERVIDOR:8000/register/agent?url=http://IP_DE_TU_AGENTE:PUERTO&channels=#public"
+  ```
+* **Registrar un Servidor MCP:**
+  ```bash
+  curl -X POST "http://IP_DE_TU_SERVIDOR:8000/register/mcp?url=http://IP_DE_TU_MCP:PUERTO&channels=#public"
+  ```
+
+Una vez registrado, las nuevas capacidades estarán disponibles de forma inmediata para búsquedas y enrutamiento semántico a través del gateway.
+
 ---
 
 ## Ejecución de la Demo
