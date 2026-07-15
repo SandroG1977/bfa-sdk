@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.gateway
     container_name: irc-a-gateway
+    image: irc-a-gateway:latest
     ports:
       - "8000:8000"
     environment:
