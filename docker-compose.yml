@@ -1,9 +1,9 @@
 services:
-  bfa-gateway:
+  irc-a-gateway:
     build:
       context: .
       dockerfile: Dockerfile.gateway
-    container_name: bfa-gateway
+    container_name: irc-a-gateway
     ports:
       - "8000:8000"
     environment:

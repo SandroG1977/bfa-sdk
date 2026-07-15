@@ -20,11 +20,11 @@ if os.path.exists("bfa_registry_db.json"):
         print(f"[POC] Warning: Could not clear previous registry database: {e}")
 
 # Start Gateway (Port 8000)
-print("\n[POC] Launching BFA Gateway on port 8000...")
+print("\n[POC] Launching IRC-A Gateway on port 8000...")
 gateway_proc = subprocess.Popen([sys.executable, "-u", "poc/gateway.py"])
 
 try:
-    print("\n[POC] Waiting for BFA Gateway to boot up...")
+    print("\n[POC] Waiting for IRC-A Gateway to boot up...")
     
     # Wait for Gateway
     gateway_ok = False
