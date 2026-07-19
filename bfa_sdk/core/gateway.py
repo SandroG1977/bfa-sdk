@@ -24,6 +24,22 @@ CONFIG = BFAConfig()
 EMBEDDER = None
 ROUTER = None
 
+# Global system trace logs
+SYSTEM_LOGS: List[Dict[str, Any]] = []
+
+def add_system_log(event_type: str, source: str, message: str, details: Any = None):
+    import time
+    log_entry = {
+        "timestamp": time.strftime("%H:%M:%S"),
+        "event_type": event_type, # "REGISTRATION", "DISCOVERY", "EXECUTION", "SYSTEM", "ERROR"
+        "source": source,
+        "message": message,
+        "details": details
+    }
+    SYSTEM_LOGS.append(log_entry)
+    if len(SYSTEM_LOGS) > 200:
+        SYSTEM_LOGS.pop(0)
+
 REGISTRY_DB_PATH = os.getenv("BFA_REGISTRY_DB_PATH", "bfa_registry_db.json")
 
 # Ephemeral keys generated on load (unless loaded from env/files)
@@ -233,6 +249,10 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         )
         return {"public_key": pem.decode("utf-8")}
 
+    @app.get("/logs")
+    def get_logs():
+        return SYSTEM_LOGS
+
     @app.post("/register/init")
     def register_init(payload: Dict[str, Any]):
         node_id = payload.get("node_id")
@@ -246,6 +266,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
             "channels": channels,
             "public_key": None
         }
+        add_system_log("REGISTRATION", node_id, "Initiated challenge-response handshake.")
         return {"challenge_bytes": challenge_bytes}
 
     @app.post("/register/verify")
@@ -271,8 +292,10 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
                 hashes.SHA256()
             )
         except InvalidSignature:
+            add_system_log("ERROR", node_id, "Handshake validation failed: Invalid cryptographic signature.")
             raise HTTPException(status_code=401, detail="Invalid cryptographic signature")
         except Exception as e:
+            add_system_log("ERROR", node_id, f"Handshake validation failed with exception: {e}")
             raise HTTPException(status_code=400, detail=f"Failed to verify signature: {e}")
             
         REGISTERED_NODES[node_id]["public_key"] = pubkey
@@ -289,6 +312,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
             algorithm="RS256"
         )
         
+        add_system_log("REGISTRATION", node_id, "Handshake verified. Session token generated successfully.")
         return {"session_token": session_token, "expiry": expiry}
 
     @app.post("/register/disconnect")
@@ -307,7 +331,10 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         # 2. Remove associated capabilities from semantic search registry
         keys_to_remove = []
         for key, value in list(ROUTER.registry.items()):
-            if key == node_id or value.get("url") == node_id or value.get("server_url") == node_id:
+            if (key == node_id or 
+                value.get("node_id") == node_id or 
+                value.get("url") == node_id or 
+                value.get("server_url") == node_id):
                 keys_to_remove.append(key)
             elif value.get("type") == "agent" and key.startswith(node_id):
                 keys_to_remove.append(key)
@@ -320,6 +347,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         if ROUTER:
             ROUTER.build_index()
             
+        add_system_log("REGISTRATION", node_id, f"Node successfully disconnected. Removed {len(keys_to_remove)} capabilities from FAISS.")
         return {
             "status": "success",
             "message": f"Node '{node_id}' successfully disconnected and removed from FAISS index."
@@ -357,6 +385,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         result = ROUTER.resolve(query, agent_channels=caller_channels)
         best = result.get("best")
         if not best:
+            add_system_log("DISCOVERY", caller_id, f"Failed discovery: No capability found matching query '{query}' under authorized channels.")
             raise HTTPException(status_code=404, detail="No matching capability found under authorized channels")
             
         target_node_id = best["skill"]
@@ -388,6 +417,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         
         target_url = best["data"].get("url") or best["data"].get("server_url")
         
+        add_system_log("DISCOVERY", caller_id, f"Resolved query '{query}' -> target '{target_node_id}' ({target_url}). Mints DET token.")
         return {
             "status": "success",
             "det": det,
@@ -396,8 +426,33 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
             "type": target_type
         }
 
+    @app.post("/mint")
+    def mint_token(payload: Dict[str, Any]):
+        """
+        Manually mint a DET token for a custom target and action.
+        """
+        target_node_id = payload.get("target_node_id")
+        permitted_action = payload.get("permitted_action")
+        restricted_params = payload.get("restricted_params", {})
+        if not target_node_id or not permitted_action:
+            raise HTTPException(status_code=400, detail="Missing target_node_id or permitted_action")
+        det_expiry = int(time.time()) + 3600
+        det = jwt.encode(
+            {
+                "sub": "gateway-admin",
+                "aud": target_node_id,
+                "permitted_action": permitted_action,
+                "restricted_params": restricted_params,
+                "exp": det_expiry
+            },
+            GATEWAY_PRIVATE_KEY,
+            algorithm="RS256"
+        )
+        add_system_log("SYSTEM", "Gateway", f"Manually minted DET token for target '{target_node_id}', action '{permitted_action}'")
+        return {"det": det}
+
     @app.post("/register/agent")
-    async def register_agent(url: str, channels: str = "#public"):
+    async def register_agent(url: str, channels: str = "#public", node_id: str = None):
         """
         Dynamically register a new A2A Agent URL in runtime, index it in FAISS, and persist it.
         """
@@ -406,16 +461,49 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
             
         new_agents = await discover_agents([url])
         if not new_agents:
+            add_system_log("ERROR", node_id or url, f"Failed dynamic discovery for Agent at {url}.")
             raise HTTPException(status_code=400, detail=f"Failed to discover agent at {url}")
             
         channel_list = [ch.strip() for ch in channels.split(",") if ch.strip()]
         for skill_id in new_agents:
             new_agents[skill_id]["channels"] = channel_list
+            new_agents[skill_id]["node_id"] = node_id or skill_id
+            
+        # Prevent registration of duplicate IDs or identical semantic metadata
+        for skill_id, item in new_agents.items():
+            if skill_id in ROUTER.registry:
+                raise HTTPException(status_code=409, detail=f"Conflict: Agent skill ID '{skill_id}' is already registered.")
+            
+            tags_str = " ".join(item.get("tags", []))
+            examples_str = " ".join(item.get("examples", []))
+            new_search_text = " ".join([
+                item.get("name", ""),
+                item.get("description", ""),
+                tags_str,
+                examples_str
+            ]).strip().lower()
+
+            for existing_id, existing_item in ROUTER.registry.items():
+                existing_tags_str = " ".join(existing_item.get("tags", []))
+                existing_examples_str = " ".join(existing_item.get("examples", []))
+                existing_search_text = " ".join([
+                    existing_item.get("name", ""),
+                    existing_item.get("description", ""),
+                    existing_tags_str,
+                    existing_examples_str
+                ]).strip().lower()
+
+                if new_search_text == existing_search_text:
+                    raise HTTPException(
+                        status_code=409, 
+                        detail=f"Conflict: An agent/tool with identical semantic metadata is already registered ('{existing_id}')."
+                    )
             
         ROUTER.update_registry(new_agents)
         ROUTER.build_index()
         
         persist_endpoint("agent", url)
+        add_system_log("REGISTRATION", node_id or list(new_agents.keys())[0], f"Successfully registered Agent at {url} on channels {channels}.")
         return {
             "status": "success",
             "message": f"Successfully registered Agent at {url}",
@@ -423,7 +511,7 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
         }
 
     @app.post("/register/mcp")
-    async def register_mcp(url: str, channels: str = "#public"):
+    async def register_mcp(url: str, channels: str = "#public", node_id: str = None):
         """
         Dynamically register a new MCP Server URL in runtime, index its tools in FAISS, and persist it.
         """
@@ -432,16 +520,49 @@ def create_gateway_app(config: BFAConfig = None) -> FastAPI:
             
         new_tools = await discover_tools([url])
         if not new_tools:
+            add_system_log("ERROR", node_id or url, f"Failed dynamic discovery for MCP tools at {url}.")
             raise HTTPException(status_code=400, detail=f"Failed to discover MCP tools at {url}")
             
         channel_list = [ch.strip() for ch in channels.split(",") if ch.strip()]
         for tool_name in new_tools:
             new_tools[tool_name]["channels"] = channel_list
+            new_tools[tool_name]["node_id"] = node_id or url
+            
+        # Prevent registration of duplicate IDs or identical semantic metadata
+        for tool_name, item in new_tools.items():
+            if tool_name in ROUTER.registry:
+                raise HTTPException(status_code=409, detail=f"Conflict: Tool name '{tool_name}' is already registered.")
+            
+            tags_str = " ".join(item.get("tags", []))
+            examples_str = " ".join(item.get("examples", []))
+            new_search_text = " ".join([
+                item.get("name", ""),
+                item.get("description", ""),
+                tags_str,
+                examples_str
+            ]).strip().lower()
+
+            for existing_id, existing_item in ROUTER.registry.items():
+                existing_tags_str = " ".join(existing_item.get("tags", []))
+                existing_examples_str = " ".join(existing_item.get("examples", []))
+                existing_search_text = " ".join([
+                    existing_item.get("name", ""),
+                    existing_item.get("description", ""),
+                    existing_tags_str,
+                    existing_examples_str
+                ]).strip().lower()
+
+                if new_search_text == existing_search_text:
+                    raise HTTPException(
+                        status_code=409, 
+                        detail=f"Conflict: An agent/tool with identical semantic metadata is already registered ('{existing_id}')."
+                    )
             
         ROUTER.update_registry(new_tools)
         ROUTER.build_index()
         
         persist_endpoint("mcp", url)
+        add_system_log("REGISTRATION", node_id or "MCP Server", f"Successfully registered MCP Server at {url} with {len(new_tools)} tools.")
         return {
             "status": "success",
             "message": f"Successfully registered MCP Server at {url}",
