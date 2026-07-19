@@ -423,14 +423,14 @@ def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_t
                     "type": "agent"
                 }
             }
-        if "http://localhost:8002" in urls:
+        if "http://localhost:8009" in urls:
             return {
                 "skill_different_id": {
                     "name": "Original Agent",
                     "description": "This is a unique description",
                     "tags": ["test"],
                     "examples": ["example"],
-                    "url": "http://localhost:8002",
+                    "url": "http://localhost:8009",
                     "type": "agent"
                 }
             }
@@ -453,7 +453,7 @@ def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_t
         assert "is already registered" in res.json()["detail"]
         
         # Test Semantic Content Collision
-        res = client.post("/register/agent", params={"url": "http://localhost:8002"})
+        res = client.post("/register/agent", params={"url": "http://localhost:8009"})
         assert res.status_code == 409
         assert "identical semantic metadata is already registered" in res.json()["detail"]
 
