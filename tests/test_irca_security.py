@@ -1,9 +1,8 @@
 import pytest
-import jwt
 from starlette.testclient import TestClient
 from starlette.responses import JSONResponse
 from starlette.requests import Request
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 from bfa_sdk.core.gateway import create_gateway_app, GATEWAY_PUBLIC_KEY
@@ -11,9 +10,28 @@ from bfa_sdk.core.agent import BFAAgent
 from bfa_sdk.core.mcp import BFAMCP
 from bfa_sdk.router.search import BFASemanticRouter
 from bfa_sdk.router.embedder import DummyEmbedder
+from bfa_sdk.core.paseto import sign_paseto_v4_public, verify_paseto_v4_public
+
+class MockJWT:
+    @staticmethod
+    def encode(payload, key, algorithm=None):
+        import uuid
+        import time
+        p = payload.copy()
+        if "jti" not in p:
+            p["jti"] = str(uuid.uuid4())
+        if "iat" not in p:
+            p["iat"] = int(time.time())
+        return sign_paseto_v4_public(p, key)
+
+    @staticmethod
+    def decode(token, key, algorithms=None, audience=None, options=None):
+        return verify_paseto_v4_public(token, key)
+
+jwt = MockJWT
 
 # 1. Setup mock keys for testing
-TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+TEST_PRIVATE_KEY = ed25519.Ed25519PrivateKey.generate()
 TEST_PUBLIC_KEY = TEST_PRIVATE_KEY.public_key()
 TEST_PUB_PEM = TEST_PUBLIC_KEY.public_bytes(
     encoding=serialization.Encoding.PEM,
@@ -56,12 +74,8 @@ async def test_cryptographic_handshake_and_session_minting(monkeypatch):
     assert len(challenge_bytes) == 64  # Hex representation of 32 bytes
     
     # 2. Solve challenge using agent's private key
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.primitives import hashes
     signature = TEST_PRIVATE_KEY.sign(
-        challenge_bytes.encode("utf-8"),
-        padding.PKCS1v15(),
-        hashes.SHA256()
+        challenge_bytes.encode("utf-8")
     )
     
     # 3. POST /register/verify
@@ -162,7 +176,7 @@ async def test_offline_det_verification_and_parameter_lockdown():
         get_balance(customer_id="999", delegated_token=valid_det)
         
     # Case 3: Invalid DET signature (should fail verification)
-    invalid_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    invalid_key = ed25519.Ed25519PrivateKey.generate()
     invalid_det = jwt.encode(
         {
             "sub": "credit-agent",
@@ -244,7 +258,7 @@ def test_uncovered_key_loading():
     """
     pem_private = TEST_PRIVATE_KEY.private_bytes(
         encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.TraditionalOpenSSL,
+        format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption()
     ).decode("utf-8")
     
