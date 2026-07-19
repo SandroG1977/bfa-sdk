@@ -76,16 +76,25 @@ async def test_interactive_agent_run_fallback_session_id():
         examples=["hello"]
     )
     
-    # Context lacking attribute context_id, triggers context.get_user_input() fallback
+    # Context lacking attribute context_id, falls back to context.message.context_id
     context = MagicMock()
     del context.context_id
-    context.get_user_input.return_value = "session-fallback"
+    context.message = MagicMock()
+    context.message.context_id = "session-fallback"
     
     response = await agent.run("hello", context)
     assert response == "Echo: hello"
     
     history = agent.memory_stack.get_session("session-fallback")["history"]
     assert len(history) == 2
+
+    # Ultimately falls back to default-session if neither exists
+    context_no_id = MagicMock()
+    del context_no_id.context_id
+    del context_no_id.message
+    response = await agent.run("hello", context_no_id)
+    assert response == "Echo: hello"
+    assert len(agent.memory_stack.get_session("default-session")["history"]) == 2
 
 @pytest.mark.anyio
 async def test_interactive_agent_run_exception():

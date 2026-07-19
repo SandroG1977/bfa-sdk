@@ -51,16 +51,14 @@ class BFAInteractiveAgent(BFAAgent):
         Intercepts the standard run to handle session memory before passing it to handle_interaction.
         """
         # Get context_id or default to a standard session ID
-        try:
-            session_id = context.get_user_input() # Or some other ID
-        except:
-            session_id = "default-session"
-            
-        # A better way to get context_id is via the raw request if possible, but for now we use a fallback
-        if hasattr(context, "message") and hasattr(context.message, "context_id"):
-            session_id = context.message.context_id
-        elif hasattr(context, "context_id"):
+        session_id = None
+        if hasattr(context, "context_id"):
             session_id = getattr(context, "context_id")
+        elif hasattr(context, "message") and hasattr(context.message, "context_id"):
+            session_id = context.message.context_id
+            
+        if not session_id:
+            session_id = "default-session"
             
         self.memory_stack.add_message(session_id, "user", user_message)
         

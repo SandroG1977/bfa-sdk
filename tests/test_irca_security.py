@@ -334,39 +334,38 @@ def test_discover_endpoint_failures():
     Tests /discover endpoint error handling.
     """
     app = create_gateway_app()
-    client = TestClient(app)
-    
-    # 1. Missing session token
-    res = client.post("/discover", params={"query": "test"})
-    assert res.status_code == 401
-    assert "Missing session_token" in res.json()["detail"]
-    
-    # 2. Invalid session token
-    res = client.post("/discover", params={"query": "test"}, json={"session_token": "bad-token"})
-    assert res.status_code == 401
-    assert "Invalid session token" in res.json()["detail"]
-    
-    # 3. Expired session token
-    from bfa_sdk.core.gateway import GATEWAY_PRIVATE_KEY
-    import time
-    expired_token = jwt.encode(
-        {"sub": "caller", "channels": ["#public"], "exp": int(time.time()) - 10},
-        GATEWAY_PRIVATE_KEY,
-        algorithm="RS256"
-    )
-    res = client.post("/discover", params={"query": "test"}, json={"session_token": expired_token})
-    assert res.status_code == 401
-    assert "Session token expired" in res.json()["detail"]
-    
-    # 4. No matching capability found
-    valid_token = jwt.encode(
-        {"sub": "caller", "channels": ["#empty-channel"], "exp": int(time.time()) + 100},
-        GATEWAY_PRIVATE_KEY,
-        algorithm="RS256"
-    )
-    res = client.post("/discover", params={"query": "test"}, json={"session_token": valid_token})
-    assert res.status_code == 404
-    assert "No matching capability found" in res.json()["detail"]
+    with TestClient(app) as client:
+        # 1. Missing session token
+        res = client.post("/discover", params={"query": "test"})
+        assert res.status_code == 401
+        assert "Missing session_token" in res.json()["detail"]
+        
+        # 2. Invalid session token
+        res = client.post("/discover", params={"query": "test"}, json={"session_token": "bad-token"})
+        assert res.status_code == 401
+        assert "Invalid session token" in res.json()["detail"]
+        
+        # 3. Expired session token
+        from bfa_sdk.core.gateway import GATEWAY_PRIVATE_KEY
+        import time
+        expired_token = jwt.encode(
+            {"sub": "caller", "channels": ["#public"], "exp": int(time.time()) - 10},
+            GATEWAY_PRIVATE_KEY,
+            algorithm="RS256"
+        )
+        res = client.post("/discover", params={"query": "test"}, json={"session_token": expired_token})
+        assert res.status_code == 401
+        assert "Session token expired" in res.json()["detail"]
+        
+        # 4. No matching capability found
+        valid_token = jwt.encode(
+            {"sub": "caller", "channels": ["#empty-channel"], "exp": int(time.time()) + 100},
+            GATEWAY_PRIVATE_KEY,
+            algorithm="RS256"
+        )
+        res = client.post("/discover", params={"query": "test"}, json={"session_token": valid_token})
+        assert res.status_code == 404
+        assert "No matching capability found" in res.json()["detail"]
 
 
 @pytest.mark.anyio
@@ -427,27 +426,26 @@ async def test_disconnect_and_shutdown_hooks(monkeypatch):
     from unittest.mock import MagicMock
     
     app = create_gateway_app()
-    client = TestClient(app)
-    
-    # 1. Register a mock agent skill first
-    from bfa_sdk.core.gateway import ROUTER
-    ROUTER.update_registry({
-        "test-disconnect-agent": {
-            "name": "disconnect_skill",
-            "description": "test skill",
-            "tags": [],
-            "examples": [],
-            "type": "agent",
-            "url": "http://localhost:8099"
-        }
-    })
-    ROUTER.build_index()
-    assert "test-disconnect-agent" in ROUTER.registry
-    
-    # 2. Call /register/disconnect to kick it
-    res = client.post("/register/disconnect", json={"node_id": "test-disconnect-agent"})
-    assert res.status_code == 200
-    assert "test-disconnect-agent" not in ROUTER.registry
+    with TestClient(app) as client:
+        # 1. Register a mock agent skill first
+        import bfa_sdk.core.gateway as gateway_mod
+        gateway_mod.ROUTER.update_registry({
+            "test-disconnect-agent": {
+                "name": "disconnect_skill",
+                "description": "test skill",
+                "tags": [],
+                "examples": [],
+                "type": "agent",
+                "url": "http://localhost:8099"
+            }
+        })
+        gateway_mod.ROUTER.build_index()
+        assert "test-disconnect-agent" in gateway_mod.ROUTER.registry
+        
+        # 2. Call /register/disconnect to kick it
+        res = client.post("/register/disconnect", json={"node_id": "test-disconnect-agent"})
+        assert res.status_code == 200
+        assert "test-disconnect-agent" not in gateway_mod.ROUTER.registry
     
     # 3. Test BFAAgent shutdown event triggering disconnect call
     disconnect_called = False
@@ -738,38 +736,37 @@ def test_discover_success_flow():
     import bfa_sdk.core.gateway as gateway_mod
     
     app = create_gateway_app()
-    client = TestClient(app)
-    
-    # Register an agent skill semantically with keys.startswith mismatch
-    from bfa_sdk.core.gateway import ROUTER
-    ROUTER.update_registry({
-        "agent-loan-test_skill": {
-            "name": "apply_loan",
-            "description": "processes credit loans",
-            "tags": ["loan"],
-            "examples": ["process loan application"],
-            "type": "agent",
-            "url": "http://localhost:8088"
-        }
-    })
-    ROUTER.build_index()
-    
-    # Mint a valid session token
-    session_token = jwt.encode(
-        {"sub": "caller-client", "channels": ["#public"], "exp": int(time.time()) + 100},
-        GATEWAY_PRIVATE_KEY,
-        algorithm="RS256"
-    )
-    
-    # Test /resolve endpoint (line 212 in gateway.py)
-    res_resolve = client.get("/resolve?query=loan")
-    assert res_resolve.status_code == 200
-    
-    # Call /discover
-    res = client.post("/discover?query=process loan application for customer id-992", json={
-        "session_token": session_token
-    })
-    assert res.status_code == 200
+    with TestClient(app) as client:
+        # Register an agent skill semantically with keys.startswith mismatch
+        import bfa_sdk.core.gateway as gateway_mod
+        gateway_mod.ROUTER.update_registry({
+            "agent-loan-test_skill": {
+                "name": "apply_loan",
+                "description": "processes credit loans",
+                "tags": ["loan"],
+                "examples": ["process loan application"],
+                "type": "agent",
+                "url": "http://localhost:8088"
+            }
+        })
+        gateway_mod.ROUTER.build_index()
+        
+        # Mint a valid session token
+        session_token = jwt.encode(
+            {"sub": "caller-client", "channels": ["#public"], "exp": int(time.time()) + 100},
+            GATEWAY_PRIVATE_KEY,
+            algorithm="RS256"
+        )
+        
+        # Test /resolve endpoint (line 212 in gateway.py)
+        res_resolve = client.get("/resolve?query=loan")
+        assert res_resolve.status_code == 200
+        
+        # Call /discover
+        res = client.post("/discover?query=process loan application for customer id-992", json={
+            "session_token": session_token
+        })
+        assert res.status_code == 200
     data = res.json()
     assert "det" in data
     assert data["url"] == "http://localhost:8088"
