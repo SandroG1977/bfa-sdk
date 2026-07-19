@@ -783,7 +783,7 @@ def test_discover_success_flow():
     })
     assert res_camp.status_code == 200
     data_camp = res_camp.json()
-    decoded_camp = jwt.decode(data_camp["det"], GATEWAY_PUBLIC_KEY, algorithms=["RS256"], audience="mock_skill")
+    decoded_camp = jwt.decode(data_camp["det"], GATEWAY_PUBLIC_KEY, algorithms=["RS256"], audience="agent-loan-test_skill")
     assert decoded_camp["restricted_params"]["campaign_id"] == "camp-777"
     
     # Test /register/disconnect with registered node (line 303 in gateway.py)
