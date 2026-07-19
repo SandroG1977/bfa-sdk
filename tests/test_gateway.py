@@ -399,8 +399,12 @@ def test_gateway_register_mcp_fail(mock_discover, mock_gateway_setup):
         res = client.post("/register/mcp", params={"url": "http://invalid"})
         assert res.status_code == 400
 
+@patch("bfa_sdk.core.gateway.discover_tools")
 @patch("bfa_sdk.core.gateway.discover_agents")
-def test_gateway_register_agent_collisions(mock_discover, mock_gateway_setup):
+def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_tools, mock_gateway_setup):
+    mock_discover_agents.return_value = {}
+    mock_discover_tools.return_value = {}
+    
     config = BFAConfig()
     app = create_gateway_app(config)
     
@@ -415,9 +419,9 @@ def test_gateway_register_agent_collisions(mock_discover, mock_gateway_setup):
         }
     }
     
+    mock_discover_agents.return_value = mock_agent_data
     with TestClient(app) as client:
         # Register first agent successfully
-        mock_discover.return_value = mock_agent_data
         res = client.post("/register/agent", params={"url": "http://localhost:8001"})
         assert res.status_code == 200
         
@@ -437,14 +441,24 @@ def test_gateway_register_agent_collisions(mock_discover, mock_gateway_setup):
                 "type": "agent"
             }
         }
-        mock_discover.return_value = mock_duplicate_semantic_data
+        mock_discover_agents.return_value = mock_duplicate_semantic_data
         res = client.post("/register/agent", params={"url": "http://localhost:8002"})
         assert res.status_code == 409
         assert "identical semantic metadata is already registered" in res.json()["detail"]
 
+    import bfa_sdk.core.gateway as gateway_mod
+    if gateway_mod.ROUTER:
+        gateway_mod.ROUTER.registry.clear()
+        gateway_mod.ROUTER.index = None
+        gateway_mod.ROUTER.index_keys = []
+
 
 @patch("bfa_sdk.core.gateway.discover_tools")
-def test_gateway_register_mcp_collisions(mock_discover, mock_gateway_setup):
+@patch("bfa_sdk.core.gateway.discover_agents")
+def test_gateway_register_mcp_collisions(mock_discover_agents, mock_discover_tools, mock_gateway_setup):
+    mock_discover_agents.return_value = {}
+    mock_discover_tools.return_value = {}
+    
     config = BFAConfig()
     app = create_gateway_app(config)
     
@@ -459,9 +473,9 @@ def test_gateway_register_mcp_collisions(mock_discover, mock_gateway_setup):
         }
     }
     
+    mock_discover_tools.return_value = mock_mcp_data
     with TestClient(app) as client:
         # Register first tool successfully
-        mock_discover.return_value = mock_mcp_data
         res = client.post("/register/mcp", params={"url": "http://localhost:8003"})
         assert res.status_code == 200
         
@@ -481,7 +495,14 @@ def test_gateway_register_mcp_collisions(mock_discover, mock_gateway_setup):
                 "type": "tool"
             }
         }
-        mock_discover.return_value = mock_duplicate_semantic_data
+        mock_discover_tools.return_value = mock_duplicate_semantic_data
         res = client.post("/register/mcp", params={"url": "http://localhost:8004"})
         assert res.status_code == 409
         assert "identical semantic metadata is already registered" in res.json()["detail"]
+
+    import bfa_sdk.core.gateway as gateway_mod
+    if gateway_mod.ROUTER:
+        gateway_mod.ROUTER.registry.clear()
+        gateway_mod.ROUTER.index = None
+        gateway_mod.ROUTER.index_keys = []
+
