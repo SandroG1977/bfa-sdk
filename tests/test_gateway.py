@@ -103,27 +103,36 @@ def test_gateway_endpoints(mock_gateway_setup):
 @patch("bfa_sdk.core.gateway.discover_agents")
 @patch("bfa_sdk.core.gateway.discover_tools")
 def test_dynamic_registration_endpoints(mock_discover_tools, mock_discover_agents, mock_gateway_setup):
-    mock_discover_agents.return_value = {
-        "new_agent_skill": {
-            "name": "New Agent",
-            "description": "Dynamic registered agent",
-            "url": "http://localhost:8080",
-            "tags": ["dynamic"],
-            "examples": ["hey dynamic"],
-            "type": "agent"
-        }
-    }
-    
-    mock_discover_tools.return_value = {
-        "new_mcp_tool": {
-            "type": "tool",
-            "server_url": "http://localhost:8081",
-            "name": "new_mcp_tool",
-            "description": "Dynamic registered tool",
-            "tags": ["dynamic_tool"],
-            "examples": ["invoke tool"]
-        }
-    }
+    def mock_discover_agents_side_effect(urls):
+        if "http://localhost:8080" in urls:
+            return {
+                "new_agent_skill": {
+                    "name": "New Agent",
+                    "description": "Dynamic registered agent",
+                    "url": "http://localhost:8080",
+                    "tags": ["dynamic"],
+                    "examples": ["hey dynamic"],
+                    "type": "agent"
+                }
+            }
+        return {}
+        
+    def mock_discover_tools_side_effect(urls):
+        if "http://localhost:8081" in urls:
+            return {
+                "new_mcp_tool": {
+                    "type": "tool",
+                    "server_url": "http://localhost:8081",
+                    "name": "new_mcp_tool",
+                    "description": "Dynamic registered tool",
+                    "tags": ["dynamic_tool"],
+                    "examples": ["invoke tool"]
+                }
+            }
+        return {}
+        
+    mock_discover_agents.side_effect = mock_discover_agents_side_effect
+    mock_discover_tools.side_effect = mock_discover_tools_side_effect
     
     config = BFAConfig()
     app = create_gateway_app(config)
@@ -402,24 +411,37 @@ def test_gateway_register_mcp_fail(mock_discover, mock_gateway_setup):
 @patch("bfa_sdk.core.gateway.discover_tools")
 @patch("bfa_sdk.core.gateway.discover_agents")
 def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_tools, mock_gateway_setup):
-    mock_discover_agents.return_value = {}
+    def mock_discover_agents_side_effect(urls):
+        if "http://localhost:8001" in urls:
+            return {
+                "skill_1": {
+                    "name": "Original Agent",
+                    "description": "This is a unique description",
+                    "tags": ["test"],
+                    "examples": ["example"],
+                    "url": "http://localhost:8001",
+                    "type": "agent"
+                }
+            }
+        if "http://localhost:8002" in urls:
+            return {
+                "skill_different_id": {
+                    "name": "Original Agent",
+                    "description": "This is a unique description",
+                    "tags": ["test"],
+                    "examples": ["example"],
+                    "url": "http://localhost:8002",
+                    "type": "agent"
+                }
+            }
+        return {}
+
+    mock_discover_agents.side_effect = mock_discover_agents_side_effect
     mock_discover_tools.return_value = {}
     
     config = BFAConfig()
     app = create_gateway_app(config)
     
-    mock_agent_data = {
-        "skill_1": {
-            "name": "Original Agent",
-            "description": "This is a unique description",
-            "tags": ["test"],
-            "examples": ["example"],
-            "url": "http://localhost:8001",
-            "type": "agent"
-        }
-    }
-    
-    mock_discover_agents.return_value = mock_agent_data
     with TestClient(app) as client:
         # Register first agent successfully
         res = client.post("/register/agent", params={"url": "http://localhost:8001"})
@@ -431,17 +453,6 @@ def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_t
         assert "is already registered" in res.json()["detail"]
         
         # Test Semantic Content Collision
-        mock_duplicate_semantic_data = {
-            "skill_different_id": {
-                "name": "Original Agent",
-                "description": "This is a unique description",
-                "tags": ["test"],
-                "examples": ["example"],
-                "url": "http://localhost:8002",
-                "type": "agent"
-            }
-        }
-        mock_discover_agents.return_value = mock_duplicate_semantic_data
         res = client.post("/register/agent", params={"url": "http://localhost:8002"})
         assert res.status_code == 409
         assert "identical semantic metadata is already registered" in res.json()["detail"]
@@ -456,24 +467,37 @@ def test_gateway_register_agent_collisions(mock_discover_agents, mock_discover_t
 @patch("bfa_sdk.core.gateway.discover_tools")
 @patch("bfa_sdk.core.gateway.discover_agents")
 def test_gateway_register_mcp_collisions(mock_discover_agents, mock_discover_tools, mock_gateway_setup):
+    def mock_discover_tools_side_effect(urls):
+        if "http://localhost:8003" in urls:
+            return {
+                "tool_1": {
+                    "name": "tool_1",
+                    "description": "unique tool description",
+                    "tags": ["test_mcp"],
+                    "examples": ["example_mcp"],
+                    "server_url": "http://localhost:8003",
+                    "type": "tool"
+                }
+            }
+        if "http://localhost:8004" in urls:
+            return {
+                "tool_different_name": {
+                    "name": "tool_1",
+                    "description": "unique tool description",
+                    "tags": ["test_mcp"],
+                    "examples": ["example_mcp"],
+                    "server_url": "http://localhost:8004",
+                    "type": "tool"
+                }
+            }
+        return {}
+
+    mock_discover_tools.side_effect = mock_discover_tools_side_effect
     mock_discover_agents.return_value = {}
-    mock_discover_tools.return_value = {}
     
     config = BFAConfig()
     app = create_gateway_app(config)
     
-    mock_mcp_data = {
-        "tool_1": {
-            "name": "tool_1",
-            "description": "unique tool description",
-            "tags": ["test_mcp"],
-            "examples": ["example_mcp"],
-            "server_url": "http://localhost:8003",
-            "type": "tool"
-        }
-    }
-    
-    mock_discover_tools.return_value = mock_mcp_data
     with TestClient(app) as client:
         # Register first tool successfully
         res = client.post("/register/mcp", params={"url": "http://localhost:8003"})
@@ -485,17 +509,6 @@ def test_gateway_register_mcp_collisions(mock_discover_agents, mock_discover_too
         assert "is already registered" in res.json()["detail"]
         
         # Test Semantic Content Collision
-        mock_duplicate_semantic_data = {
-            "tool_different_name": {
-                "name": "tool_1",
-                "description": "unique tool description",
-                "tags": ["test_mcp"],
-                "examples": ["example_mcp"],
-                "server_url": "http://localhost:8004",
-                "type": "tool"
-            }
-        }
-        mock_discover_tools.return_value = mock_duplicate_semantic_data
         res = client.post("/register/mcp", params={"url": "http://localhost:8004"})
         assert res.status_code == 409
         assert "identical semantic metadata is already registered" in res.json()["detail"]
