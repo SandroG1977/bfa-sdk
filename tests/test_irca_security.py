@@ -794,7 +794,7 @@ def test_discover_success_flow():
     # Test key.startswith(node_id) matching branch in disconnect (line 311 in gateway.py)
     res_disc_starts = client.post("/register/disconnect", json={"node_id": "agent-loan-test"})
     assert res_disc_starts.status_code == 200
-    assert "agent-loan-test_skill" not in ROUTER.registry
+    assert "agent-loan-test_skill" not in gateway_mod.ROUTER.registry
     
     # Verify ROUTER is None condition (line 353 in gateway.py)
     orig_router = gateway_mod.ROUTER
